@@ -446,7 +446,7 @@ async function run() {
   const filesAfterRejectedSync = await request(
     '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
   )
-  assert.deepEqual(filesAfterRejectedSync.body.files, editorSyncFiles.body.files)
+  assert.deepEqual(filesAfterRejectedSync.body.files, directoryToFileResult.body.files)
   console.log('PASS editor-to-runner sync, deletions, and invalid-path rejection')
 
   await closeSession(secondId)
