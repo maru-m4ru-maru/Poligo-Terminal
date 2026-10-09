@@ -75,4 +75,4 @@ Render Free web services spin down after 15 minutes without inbound HTTP request
 
 ## CI
 
-The `.github/workflows/terminal-e2e.yml` workflow checks JavaScript syntax, builds the Docker image, confirms sandbox readiness, and exercises authentication, namespace boundaries, network isolation, Node.js/Python command execution, PTY input/output, Ctrl+C, project file synchronization, and session cleanup.
+The `.github/workflows/terminal-e2e.yml` workflow checks JavaScript syntax, builds the Docker image, confirms sandbox readiness, and exercises authentication, chroot filesystem isolation, per-session UIDs, seccomp network denial, Node.js/Python command execution, PTY input/output, Ctrl+C, project file synchronization, and session cleanup.
