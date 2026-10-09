@@ -749,14 +749,18 @@ async function removeEmptyParentDirectories(session, directoryParts) {
     const parent = await openDirectoryChain(session, parentParts, false)
 
     if (!parent) {
-      return
+      continue
     }
 
     try {
       const target = '/proc/self/fd/' + parent.handle.fd + '/' + directoryName
       await fs.rmdir(target)
     } catch (error) {
-      if (['ENOENT', 'ENOTDIR', 'ELOOP', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) {
+      if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) {
+        continue
+      }
+
+      if (['ENOTEMPTY', 'EEXIST'].includes(error.code)) {
         return
       }
 
