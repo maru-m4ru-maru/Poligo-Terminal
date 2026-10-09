@@ -27,8 +27,8 @@ RUN mkdir -p bin /opt/poligo/rootfs/dev /opt/poligo/rootfs/proc /opt/poligo/root
     && cp -a /usr /etc /bin /sbin /lib /lib64 /opt/poligo/rootfs/ \
     && mkdir -p /opt/poligo/rootfs/dev/pts /opt/poligo/rootfs/dev/shm \
     && rm -f /opt/poligo/rootfs/etc/hosts /opt/poligo/rootfs/etc/hostname /opt/poligo/rootfs/etc/resolv.conf \
-    && printf '127.0.0.1 localhost\\n::1 localhost\\n' > /opt/poligo/rootfs/etc/hosts \
-    && printf 'poligo-terminal\\n' > /opt/poligo/rootfs/etc/hostname \
+    && printf '127.0.0.1 localhost\n::1 localhost\n' > /opt/poligo/rootfs/etc/hosts \
+    && printf 'poligo-terminal\n' > /opt/poligo/rootfs/etc/hostname \
     && if [ "$INCLUDE_SANDBOX_DEVICES" = "true" ]; then \
         chmod 755 /opt/poligo/rootfs/dev && \
         mknod -m 666 /opt/poligo/rootfs/dev/null c 1 3 && \
@@ -56,10 +56,10 @@ RUN mkdir -p bin /opt/poligo/rootfs/dev /opt/poligo/rootfs/proc /opt/poligo/root
     && chmod -R a-w /opt/poligo/sandbox-slots \
     && chmod 755 /opt/poligo/sandbox-slots/slot1/etc /opt/poligo/sandbox-slots/slot2/etc \
     && chmod 644 /opt/poligo/sandbox-slots/slot1/etc/passwd /opt/poligo/sandbox-slots/slot1/etc/group /opt/poligo/sandbox-slots/slot2/etc/passwd /opt/poligo/sandbox-slots/slot2/etc/group \
-    && printf 'poligo20001:x:20001:20001:Poligo Terminal:/workspace:/usr/bin/bash\\n' >> /opt/poligo/sandbox-slots/slot1/etc/passwd \
-    && printf 'poligo20001:x:20001:\\n' >> /opt/poligo/sandbox-slots/slot1/etc/group \
-    && printf 'poligo20002:x:20002:20002:Poligo Terminal:/workspace:/usr/bin/bash\\n' >> /opt/poligo/sandbox-slots/slot2/etc/passwd \
-    && printf 'poligo20002:x:20002:\\n' >> /opt/poligo/sandbox-slots/slot2/etc/group \
+    && printf 'poligo20001:x:20001:20001:Poligo Terminal:/workspace:/usr/bin/bash\n' >> /opt/poligo/sandbox-slots/slot1/etc/passwd \
+    && printf 'poligo20001:x:20001:\n' >> /opt/poligo/sandbox-slots/slot1/etc/group \
+    && printf 'poligo20002:x:20002:20002:Poligo Terminal:/workspace:/usr/bin/bash\n' >> /opt/poligo/sandbox-slots/slot2/etc/passwd \
+    && printf 'poligo20002:x:20002:\n' >> /opt/poligo/sandbox-slots/slot2/etc/group \
     && chmod 444 /opt/poligo/sandbox-slots/slot1/etc/passwd /opt/poligo/sandbox-slots/slot1/etc/group /opt/poligo/sandbox-slots/slot2/etc/passwd /opt/poligo/sandbox-slots/slot2/etc/group \
     && chown -R 20001:20001 /opt/poligo/sandbox-slots/slot1/workspace \
     && chown -R 20002:20002 /opt/poligo/sandbox-slots/slot2/workspace \
