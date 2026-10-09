@@ -232,6 +232,7 @@ async function createSessionFilesystem(id, uid, files) {
     }
 
     await setWorkspaceOwnership(workspace, uid)
+    await fs.chmod(rootfs, 0o755)
 
     return {
       rootfs,
