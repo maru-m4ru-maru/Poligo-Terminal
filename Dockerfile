@@ -38,6 +38,7 @@ RUN mkdir -p bin /opt/poligo/rootfs/dev /opt/poligo/rootfs/proc /opt/poligo/root
     && ln -sf /proc/self/fd/1 /opt/poligo/rootfs/dev/stdout \
     && ln -sf /proc/self/fd/2 /opt/poligo/rootfs/dev/stderr \
     && cc -O2 -Wall -Wextra -Werror src/chroot-launcher.c -o bin/poligo-chroot-launcher \
+    && chmod -R a-s /opt/poligo/rootfs \
     && chmod -R a-w /opt/poligo/rootfs \
     && chmod 1777 /opt/poligo/rootfs/tmp /opt/poligo/rootfs/var/tmp \
     && chmod 666 /opt/poligo/rootfs/dev/null /opt/poligo/rootfs/dev/zero /opt/poligo/rootfs/dev/full /opt/poligo/rootfs/dev/random /opt/poligo/rootfs/dev/urandom /opt/poligo/rootfs/dev/tty
