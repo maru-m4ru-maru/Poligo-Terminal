@@ -651,6 +651,10 @@ async function withFileSyncLock(session, operation) {
   await previous.catch(() => {})
 
   try {
+    if (session.closing) {
+      throw new Error('terminal session not found')
+    }
+
     return await operation()
   } finally {
     release()
@@ -949,6 +953,11 @@ async function cleanupSession(session) {
   } catch {}
 
   await killUserProcesses(session)
+
+  if (session.fileSyncQueue) {
+    await session.fileSyncQueue.catch(() => {})
+  }
+
   sessions.delete(session.id)
 
   await resetSlotFilesystem(session.slot).catch(error => {
