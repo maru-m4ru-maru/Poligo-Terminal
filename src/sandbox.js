@@ -185,6 +185,7 @@ async function createSessionFilesystem(id, uid, files) {
     })
 
     const username = 'poligo' + uid
+    await fs.chmod(path.join(rootfs, 'etc'), 0o755)
     await writeSessionAccountFile(
       rootfs,
       'passwd',
