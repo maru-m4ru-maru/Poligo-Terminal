@@ -1,0 +1,16 @@
+{
+  "name": "poligo-terminal-runner",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node --check src/server.js && node --check src/sandbox.js",
+    "test": "node tests/e2e/test_runner.mjs"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0",
+    "ws": "8.22.0"
+  }
+}
