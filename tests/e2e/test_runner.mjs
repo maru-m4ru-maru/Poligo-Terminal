@@ -400,7 +400,7 @@ async function run() {
       }
     }
   )
-  assert.equal(conflictingEditorSync.status, 400, conflictingEditorSync.text)
+  assert.equal(conflictingEditorSync.status, 409, conflictingEditorSync.text)
 
   const filesAfterRejectedSync = await request(
     '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
