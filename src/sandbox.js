@@ -822,6 +822,10 @@ async function writeManagedFile(session, relativePath, content) {
       throw new Error('terminal path conflict: a file path is a directory')
     }
 
+    const destinationMode = existing?.isFile()
+      ? existing.mode & 0o777
+      : 0o600
+
     if (existing?.isFile()) {
       try {
         const current = await fs.open(
@@ -861,7 +865,7 @@ async function writeManagedFile(session, relativePath, content) {
         encoding: 'utf8'
       })
       await handle.chown(session.uid, session.uid)
-      await handle.chmod(0o600)
+      await handle.chmod(destinationMode)
       await handle.close()
       handle = null
       await fs.rename(temporary, destination)
