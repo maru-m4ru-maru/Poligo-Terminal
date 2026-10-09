@@ -39,7 +39,7 @@ jobs:
 
       - name: Build image
         run: |
-          docker build \
+          docker build --build-arg INCLUDE_SANDBOX_DEVICES=true \
             -t ghcr.io/maru-m4ru-maru/poligo-terminal-runner:main \
             -t ghcr.io/maru-m4ru-maru/poligo-terminal-runner:${GITHUB_SHA} \
             .
