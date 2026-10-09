@@ -220,8 +220,8 @@ static int parse_id(const char *value, uid_t *result) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 5) {
-    dprintf(STDERR_FILENO, "sandbox launcher requires rootfs, uid, gid and command arguments\n");
+  if (argc < 6) {
+    dprintf(STDERR_FILENO, "sandbox launcher requires rootfs, uid, gid, workdir and command arguments\n");
     return 125;
   }
 
@@ -233,7 +233,7 @@ int main(int argc, char **argv) {
     return 125;
   }
 
-  if (chdir(argv[1]) != 0 || chroot(".") != 0 || chdir("/workspace") != 0) {
+  if (chdir(argv[1]) != 0 || chroot(".") != 0 || chdir(argv[4]) != 0) {
     perror("enter terminal chroot");
     return 125;
   }
@@ -264,7 +264,7 @@ int main(int argc, char **argv) {
     close(descriptor);
   }
 
-  execv(argv[4], &argv[4]);
+  execv(argv[5], &argv[5]);
   perror("execute terminal command");
   return 127;
 }
