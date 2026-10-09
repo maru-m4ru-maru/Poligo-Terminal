@@ -738,12 +738,38 @@ async function openDirectoryChain(session, directoryParts, create) {
   }
 }
 
+async function removeEmptyParentDirectories(session, directoryParts) {
+  for (let length = directoryParts.length; length > 0; length -= 1) {
+    const parentParts = directoryParts.slice(0, length - 1)
+    const directoryName = directoryParts[length - 1]
+    const parent = await openDirectoryChain(session, parentParts, false)
+
+    if (!parent) {
+      return
+    }
+
+    try {
+      const target = '/proc/self/fd/' + parent.handle.fd + '/' + directoryName
+      await fs.rmdir(target)
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR', 'ELOOP', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) {
+        return
+      }
+
+      throw error
+    } finally {
+      await closeDirectoryHandles(parent.handles)
+    }
+  }
+}
+
 async function removeManagedFile(session, relativePath) {
   const parts = relativePath.split('/')
   const name = parts.pop()
   const parent = await openDirectoryChain(session, parts, false)
 
   if (!parent) {
+    await removeEmptyParentDirectories(session, parts)
     return
   }
 
@@ -765,6 +791,8 @@ async function removeManagedFile(session, relativePath) {
   } finally {
     await closeDirectoryHandles(parent.handles)
   }
+
+  await removeEmptyParentDirectories(session, parts)
 }
 
 async function writeManagedFile(session, relativePath, content) {
