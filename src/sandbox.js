@@ -167,6 +167,57 @@ async function writeSessionAccountFile(rootfs, filename, line) {
   await fs.chmod(targetFile, 0o444)
 }
 
+async function ensureSandboxDeviceNodes() {
+  const devDirectory = path.join(rootfsBase, 'dev')
+  const devices = [
+    { name: 'null', major: 1, minor: 3 },
+    { name: 'zero', major: 1, minor: 5 },
+    { name: 'full', major: 1, minor: 7 },
+    { name: 'random', major: 1, minor: 8 },
+    { name: 'urandom', major: 1, minor: 9 },
+    { name: 'tty', major: 5, minor: 0 }
+  ]
+
+  try {
+    await fs.chmod(devDirectory, 0o755)
+
+    for (const device of devices) {
+      const filename = path.join(devDirectory, device.name)
+      let stat = null
+
+      try {
+        stat = await fs.lstat(filename)
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          throw error
+        }
+      }
+
+      if (stat && !stat.isCharacterDevice()) {
+        throw new Error('invalid sandbox device node: ' + device.name)
+      }
+
+      if (!stat) {
+        await execFileAsync('/usr/bin/mknod', [
+          '-m',
+          '666',
+          filename,
+          'c',
+          String(device.major),
+          String(device.minor)
+        ], {
+          timeout: 5_000,
+          maxBuffer: 4_096
+        })
+      }
+
+      await fs.chmod(filename, 0o666)
+    }
+  } finally {
+    await fs.chmod(devDirectory, 0o555).catch(() => {})
+  }
+}
+
 async function createSessionFilesystem(id, uid, files) {
   const rootfs = path.join(workspaceRoot, id)
   await fs.mkdir(rootfs, {
@@ -523,6 +574,23 @@ export async function initializeSandbox() {
       ready: false,
       reason: 'chroot runtime or launcher is not installed'
     }
+    return sandboxStatus
+  }
+
+  try {
+    await ensureSandboxDeviceNodes()
+  } catch (error) {
+    const reason = (error instanceof Error ? error.message : String(error)).slice(0, 600)
+
+    sandboxStatus = {
+      ready: false,
+      reason: 'sandbox device initialization failed: ' + reason
+    }
+
+    console.error('Terminal sandbox device setup failed', {
+      reason
+    })
+
     return sandboxStatus
   }
 
