@@ -357,6 +357,57 @@ async function run() {
   assert.equal(finalFiles.body?.files?.['generated/output.txt'], 'FILE_SYNC_OK\nUPDATED_VALUE\n')
   console.log('PASS session isolation, Ctrl+C, and persistent in-session file changes')
 
+  const editorSync = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
+    'PUT',
+    {
+      files: {
+        'main.js': 'EDITOR_SYNC_OK\n',
+        'editor-created.txt': 'created by editor\n'
+      }
+    }
+  )
+  assert.equal(editorSync.status, 200, editorSync.text)
+  assert.equal(editorSync.body?.ok, true)
+
+  const editorSyncFiles = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
+  )
+  assert.equal(editorSyncFiles.status, 200, editorSyncFiles.text)
+  assert.deepEqual(editorSyncFiles.body.files, {
+    'main.js': 'EDITOR_SYNC_OK\n',
+    'editor-created.txt': 'created by editor\n'
+  })
+
+  const invalidEditorSync = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
+    'PUT',
+    {
+      files: {
+        '../escape.txt': 'unsafe'
+      }
+    }
+  )
+  assert.equal(invalidEditorSync.status, 400, invalidEditorSync.text)
+
+  const conflictingEditorSync = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
+    'PUT',
+    {
+      files: {
+        'folder': 'not a directory',
+        'folder/child.txt': 'conflicting path'
+      }
+    }
+  )
+  assert.equal(conflictingEditorSync.status, 400, conflictingEditorSync.text)
+
+  const filesAfterRejectedSync = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
+  )
+  assert.deepEqual(filesAfterRejectedSync.body.files, editorSyncFiles.body.files)
+  console.log('PASS editor-to-runner sync, deletions, and invalid-path rejection')
+
   await closeSession(secondId)
   await closeSession(firstId)
   console.log('TERMINAL RUNNER E2E: PASS')
