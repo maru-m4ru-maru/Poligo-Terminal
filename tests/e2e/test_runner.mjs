@@ -228,7 +228,6 @@ async function run() {
 
   const uid = await sendAndWait(
     "id -u; if [ \"$(id -u)\" -gt 0 ] && [ \"$(id -u)\" -lt 60000 ]; then printf 'UNPRIVILEGED_UID_OK\\n'; fi\n",
-    "id -u\n",
     outputLine('UNPRIVILEGED_UID_OK')
   )
   assert.ok(outputLine('UNPRIVILEGED_UID_OK')(uid))
