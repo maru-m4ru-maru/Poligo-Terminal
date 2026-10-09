@@ -31,7 +31,7 @@ This is defense in depth, not a dedicated VM. It depends on the container kernel
 | `TERMINAL_RUN_ROOT` | Root for temporary terminal workspaces. |
 | `TERMINAL_MAX_SESSIONS` | Maximum active sessions per service instance; defaults to `2`. |
 | `TERMINAL_IDLE_TTL_MS` | Idle-session cleanup interval; defaults to 30 minutes. |
-| `TERMINAL_MAX_LIFETIME_MS` | Maximum session lifetime; defaults to 4 hours. |
+| `TERMINAL_MAX_LIFETIME_MS` | Maximum session lifetime; defaults to 1 hour. |
 | `TERMINAL_MAX_FILES` | Maximum number of project files; defaults to `200`. |
 | `TERMINAL_MAX_PROJECT_BYTES` | Maximum incoming project size; defaults to about 5 MB. |
 | `TERMINAL_MAX_WORKSPACE_BYTES` | Maximum live workspace size; defaults to 128 MiB. |
