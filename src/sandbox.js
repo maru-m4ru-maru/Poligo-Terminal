@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import pty from 'node-pty'
@@ -135,11 +135,11 @@ function sandboxArguments(workspace, uid) {
     '/sbin'
   ]
 
-  if (awaitableExists('/usr/lib')) {
+  if (existsSync('/usr/lib')) {
     args.push('--symlink', 'usr/lib', '/lib')
   }
 
-  if (awaitableExists('/usr/lib64')) {
+  if (existsSync('/usr/lib64')) {
     args.push('--symlink', 'usr/lib64', '/lib64')
   }
 
@@ -214,23 +214,6 @@ function sandboxArguments(workspace, uid) {
   return args
 }
 
-function awaitableExists(file) {
-  return Boolean(file && requireExists(file))
-}
-
-function requireExists(file) {
-  try {
-    return fsSyncExists(file)
-  } catch {
-    return false
-  }
-}
-
-function fsSyncExists(file) {
-  return existsSync(file)
-}
-
-import { existsSync } from 'node:fs'
 
 async function makeWorkspace(id, files) {
   const workspace = path.join(workspaceRoot, id)
@@ -401,7 +384,7 @@ function createPty(session) {
       PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
       TERM: 'xterm-256color',
       HOME: session.workspace,
-      TMPDIR: path.join(session.workspace, '.terminal-cache', 'tmp',
+      TMPDIR: path.join(session.workspace, '.terminal-cache', 'tmp'),
     }
   })
 
