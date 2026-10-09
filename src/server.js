@@ -7,6 +7,7 @@ import {
   createTerminalSession,
   getSandboxStatus,
   getTerminalFiles,
+  applyTerminalFiles,
   initializeSandbox
 } from './sandbox.js'
 
@@ -168,6 +169,53 @@ const server = http.createServer({
         error: error instanceof Error
           ? error.message
           : 'terminal session not found'
+      })
+    }
+    return
+  }
+
+  if (
+    request.method === 'PUT' &&
+    url.pathname.startsWith('/v1/terminals/') &&
+    url.pathname.endsWith('/files')
+  ) {
+    const id = terminalIdFromPath(url.pathname, '/files')
+
+    try {
+      const payload = await readJson(request)
+
+      if (
+        !payload ||
+        !Object.prototype.hasOwnProperty.call(payload, 'files')
+      ) {
+        send(response, 400, {
+          error: 'terminal files are required'
+        })
+        return
+      }
+
+      const result = await applyTerminalFiles(id, payload.files)
+      send(response, 200, {
+        ok: true,
+        ...result
+      })
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'terminal file synchronization failed'
+      const status = error?.statusCode ||
+        (message.includes('terminal session not found')
+          ? 404
+          : message.includes('path conflicts with a directory') ||
+              message.includes('file path is a directory')
+            ? 409
+            : message.includes('too large') ||
+                message.includes('too many')
+              ? 413
+              : 400)
+
+      send(response, status, {
+        error: message
       })
     }
     return
