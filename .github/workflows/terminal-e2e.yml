@@ -64,6 +64,10 @@ jobs:
             if printf '%s' "$response" | grep -q '"terminalReady":true'; then
               exit 0
             fi
+            if printf '%s' "$response" | grep -q '"terminalReady":false'; then
+              docker logs poligo-terminal-runner-e2e
+              exit 1
+            fi
             sleep 1
           done
           docker logs poligo-terminal-runner-e2e
