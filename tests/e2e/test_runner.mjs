@@ -86,6 +86,10 @@ function openSocket(id) {
   })
 }
 
+function outputLine(marker) {
+  return output => output.split(/\r?\n/).some(line => line.trim() === marker)
+}
+
 function sendAndWait(socket, data, predicate, timeoutMs = 15_000) {
   return new Promise((resolve, reject) => {
     let output = ''
@@ -211,59 +215,59 @@ async function run() {
   const prompt = await sendAndWait(
     first,
     "printf 'SHELL_READY\\n'\n",
-    output => output.includes('SHELL_READY')
+    outputLine('SHELL_READY')
   )
   assert.ok(prompt.includes('SHELL_READY'))
 
   const pwd = await sendAndWait(
     first,
     "pwd\n",
-    output => output.includes('/workspace')
+    outputLine('/workspace')
   )
   assert.ok(pwd.includes('/workspace'))
 
   const uid = await sendAndWait(
     first,
     "id -u\n",
-    output => output.includes('65534')
+    outputLine('65534')
   )
   assert.ok(uid.includes('65534'))
 
   const hiddenSource = await sendAndWait(
     first,
     "test ! -e /app/src/server.js && printf 'RUNNER_SOURCE_HIDDEN\\n'\n",
-    output => output.includes('RUNNER_SOURCE_HIDDEN')
+    outputLine('RUNNER_SOURCE_HIDDEN')
   )
   assert.ok(hiddenSource.includes('RUNNER_SOURCE_HIDDEN'))
 
   const network = await sendAndWait(
     first,
     "if timeout 2 bash -c '</dev/tcp/1.1.1.1/443' 2>/dev/null; then printf 'NETWORK_NOT_ISOLATED\\n'; else printf 'NETWORK_ISOLATED\\n'; fi\n",
-    output => output.includes('NETWORK_ISOLATED') || output.includes('NETWORK_NOT_ISOLATED'),
+    output => outputLine('NETWORK_ISOLATED')(output) || outputLine('NETWORK_NOT_ISOLATED')(output),
     8_000
   )
-  assert.ok(network.includes('NETWORK_ISOLATED'))
-  assert.ok(!network.includes('NETWORK_NOT_ISOLATED'))
+  assert.ok(outputLine('NETWORK_ISOLATED')(network))
+  assert.ok(!outputLine('NETWORK_NOT_ISOLATED')(network))
   console.log('PASS PTY, unprivileged UID, filesystem view, and network namespace')
 
   const node = await sendAndWait(
     first,
     "node -e \"console.log('NODE_RUNTIME_OK')\"\n",
-    output => output.includes('NODE_RUNTIME_OK')
+    outputLine('NODE_RUNTIME_OK')
   )
   assert.ok(node.includes('NODE_RUNTIME_OK'))
 
   const python = await sendAndWait(
     first,
     "python3 -c \"print('PYTHON_RUNTIME_OK')\"\n",
-    output => output.includes('PYTHON_RUNTIME_OK')
+    outputLine('PYTHON_RUNTIME_OK')
   )
   assert.ok(python.includes('PYTHON_RUNTIME_OK'))
 
   const stderr = await sendAndWait(
     first,
     "printf 'STDERR_CHANNEL_OK\\n' >&2\n",
-    output => output.includes('STDERR_CHANNEL_OK')
+    outputLine('STDERR_CHANNEL_OK')
   )
   assert.ok(stderr.includes('STDERR_CHANNEL_OK'))
 
@@ -277,13 +281,13 @@ async function run() {
   const ignoredFile = await sendAndWait(
     first,
     "mkdir -p node_modules && printf 'IGNORE_ME' > node_modules/hidden.txt && printf 'IGNORE_READY\\n'\n",
-    output => output.includes('IGNORE_READY')
+    outputLine('IGNORE_READY')
   )
   assert.ok(ignoredFile.includes('IGNORE_READY'))
 
   const files = await request('/v1/terminals/' + encodeURIComponent(firstId) + '/files')
   assert.equal(files.status, 200, files.text)
-  assert.equal(files.body?.files?.['generated/output.txt'], 'FILE_SYNC_OK')
+  assert.equal(files.body?.files?.['generated/output.txt'], 'FILE_SYNC_OK\\n')
   assert.equal('node_modules/hidden.txt' in files.body.files, false)
   console.log('PASS runtimes, stderr, output limits path, and project file synchronization')
 
@@ -297,10 +301,10 @@ async function run() {
   const isolated = await sendAndWait(
     second,
     "if test -e '/tmp/poligo-terminal-sessions/" + firstId + "/private.txt'; then printf 'SESSION_NOT_ISOLATED\\n'; else printf 'SESSION_ISOLATED\\n'; fi\n",
-    output => output.includes('SESSION_ISOLATED') || output.includes('SESSION_NOT_ISOLATED')
+    output => outputLine('SESSION_ISOLATED')(output) || outputLine('SESSION_NOT_ISOLATED')(output)
   )
-  assert.ok(isolated.includes('SESSION_ISOLATED'))
-  assert.ok(!isolated.includes('SESSION_NOT_ISOLATED'))
+  assert.ok(outputLine('SESSION_ISOLATED')(isolated))
+  assert.ok(!outputLine('SESSION_NOT_ISOLATED')(isolated))
 
   const interrupted = await new Promise((resolve, reject) => {
     let output = ''
