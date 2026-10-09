@@ -1,0 +1,84 @@
+name: Poligo Terminal Runner E2E
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "tests/e2e/test_runner.mjs"
+      - "package.json"
+      - "Dockerfile"
+      - "render.yaml"
+      - ".github/workflows/terminal-e2e.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: poligo-terminal-runner-e2e
+  cancel-in-progress: true
+
+jobs:
+  terminal-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Install WebSocket test client
+        run: npm install --no-save ws@8.22.0
+
+      - name: Build runner image
+        run: docker build -t poligo-terminal-runner-e2e .
+
+      - name: Start runner
+        run: |
+          docker run -d \
+            --name poligo-terminal-runner-e2e \
+            --security-opt seccomp=unconfined \
+            -p 10000:10000 \
+            -e PORT=10000 \
+            -e RUNNER_TOKEN=terminal-process-e2e-token \
+            -e TERMINAL_RUN_ROOT=/tmp/poligo-terminal-sessions \
+            -e TERMINAL_MAX_SESSIONS=4 \
+            -e TERMINAL_IDLE_TTL_MS=60000 \
+            -e TERMINAL_MAX_LIFETIME_MS=300000 \
+            poligo-terminal-runner-e2e
+
+      - name: Wait for sandbox readiness
+        run: |
+          set -e
+          for attempt in $(seq 1 90); do
+            response=$(curl -sS --max-time 5 http://127.0.0.1:10000/health || true)
+            printf '%s\n' "$response"
+            if printf '%s' "$response" | grep -q '"terminalReady":true'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs poligo-terminal-runner-e2e
+          exit 1
+
+      - name: Run terminal E2E
+        env:
+          RUNNER_TEST_TOKEN: terminal-process-e2e-token
+          RUNNER_TEST_URL: http://127.0.0.1:10000
+        run: node tests/e2e/test_runner.mjs
+
+      - name: Runner logs
+        if: always()
+        run: docker logs poligo-terminal-runner-e2e
+
+      - name: Stop runner
+        if: always()
+        run: docker rm -f poligo-terminal-runner-e2e
