@@ -202,13 +202,13 @@ int main(int argc, char **argv) {
     return 125;
   }
 
-  if (setgroups(0, NULL) != 0 || setgid(gid) != 0 || setuid(uid) != 0) {
-    perror("drop terminal privileges");
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+    perror("set no_new_privs");
     return 125;
   }
 
-  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-    perror("set no_new_privs");
+  if (setgroups(0, NULL) != 0 || setgid(gid) != 0 || setuid(uid) != 0) {
+    perror("drop terminal privileges");
     return 125;
   }
 
