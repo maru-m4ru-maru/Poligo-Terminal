@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, promises as fs } from 'node:fs'
+import { constants as fsConstants, existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import pty from 'node-pty'
@@ -87,14 +87,14 @@ function normalizeFilePath(value) {
   return parts.join('/')
 }
 
-function normalizeFiles(files) {
+function normalizeFiles(files, allowEmpty = false) {
   if (!files || typeof files !== 'object' || Array.isArray(files)) {
     throw new Error('terminal files must be an object')
   }
 
   const entries = Object.entries(files)
 
-  if (!entries.length) {
+  if (!entries.length && !allowEmpty) {
     throw new Error('terminal workspace is empty')
   }
 
@@ -107,6 +107,13 @@ function normalizeFiles(files) {
 
   for (const [name, content] of entries) {
     const safePath = normalizeFilePath(name)
+
+    if (Object.keys(normalized).some(existing =>
+      existing.startsWith(safePath + '/') ||
+      safePath.startsWith(existing + '/')
+    )) {
+      throw new Error('terminal file path conflicts with a directory')
+    }
 
     if (typeof content !== 'string') {
       throw new Error('terminal file content must be text')
@@ -598,6 +605,8 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
       outputBuffer: '',
       socket: null,
       terminal: null,
+      managedFiles: new Set(Object.keys(normalized)),
+      fileSyncQueue: null,
       closing: false
     }
 
@@ -624,6 +633,256 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
   }
 }
 
+async function closeDirectoryHandles(handles) {
+  for (const handle of handles.reverse()) {
+    await handle.close().catch(() => {})
+  }
+}
+
+async function withFileSyncLock(session, operation) {
+  const previous = session.fileSyncQueue || Promise.resolve()
+  let release
+  const gate = new Promise(resolve => {
+    release = resolve
+  })
+  const queued = previous.catch(() => {}).then(() => gate)
+
+  session.fileSyncQueue = queued
+  await previous.catch(() => {})
+
+  try {
+    if (session.closing) {
+      throw new Error('terminal session not found')
+    }
+
+    return await operation()
+  } finally {
+    release()
+
+    if (session.fileSyncQueue === queued) {
+      session.fileSyncQueue = null
+    }
+  }
+}
+
+async function openDirectoryChain(session, directoryParts, create) {
+  const flags = fsConstants.O_RDONLY |
+    fsConstants.O_DIRECTORY |
+    fsConstants.O_NOFOLLOW
+  const handles = []
+
+  try {
+    let current = await fs.open(session.workspace, flags)
+    handles.push(current)
+
+    for (const part of directoryParts) {
+      const target = '/proc/self/fd/' + current.fd + '/' + part
+      let next
+
+      while (!next) {
+        try {
+          next = await fs.open(target, flags)
+        } catch (error) {
+          if (error.code === 'ENOENT' && create) {
+            await fs.mkdir(target, {
+              mode: 0o700
+            }).catch(mkdirError => {
+              if (mkdirError.code !== 'EEXIST') {
+                throw mkdirError
+              }
+            })
+            continue
+          }
+
+          if (
+            create &&
+            (error.code === 'ELOOP' || error.code === 'ENOTDIR')
+          ) {
+            const stat = await fs.lstat(target).catch(() => null)
+
+            if (stat?.isDirectory() && !stat.isSymbolicLink()) {
+              continue
+            }
+
+            await fs.rm(target, {
+              recursive: true,
+              force: true
+            })
+            continue
+          }
+
+          if (
+            !create &&
+            ['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)
+          ) {
+            await closeDirectoryHandles(handles)
+            return null
+          }
+
+          throw error
+        }
+      }
+
+      handles.push(next)
+      current = next
+
+      if (create) {
+        await next.chown(session.uid, session.uid)
+        await next.chmod(0o700)
+      }
+    }
+
+    return {
+      handle: current,
+      handles
+    }
+  } catch (error) {
+    await closeDirectoryHandles(handles)
+    throw error
+  }
+}
+
+async function removeEmptyParentDirectories(session, directoryParts) {
+  for (let length = directoryParts.length; length > 0; length -= 1) {
+    const parentParts = directoryParts.slice(0, length - 1)
+    const directoryName = directoryParts[length - 1]
+    const parent = await openDirectoryChain(session, parentParts, false)
+
+    if (!parent) {
+      continue
+    }
+
+    try {
+      const target = '/proc/self/fd/' + parent.handle.fd + '/' + directoryName
+      await fs.rmdir(target)
+    } catch (error) {
+      if (['ENOENT', 'ENOTDIR', 'ELOOP'].includes(error.code)) {
+        continue
+      }
+
+      if (['ENOTEMPTY', 'EEXIST'].includes(error.code)) {
+        return
+      }
+
+      throw error
+    } finally {
+      await closeDirectoryHandles(parent.handles)
+    }
+  }
+}
+
+async function removeManagedFile(session, relativePath) {
+  const parts = relativePath.split('/')
+  const name = parts.pop()
+  const parent = await openDirectoryChain(session, parts, false)
+
+  if (!parent) {
+    await removeEmptyParentDirectories(session, parts)
+    return
+  }
+
+  try {
+    const target = '/proc/self/fd/' + parent.handle.fd + '/' + name
+    const stat = await fs.lstat(target).catch(error => {
+      if (error.code === 'ENOENT') {
+        return null
+      }
+
+      throw error
+    })
+
+    if (stat && (stat.isFile() || stat.isSymbolicLink())) {
+      await fs.rm(target, {
+        force: true
+      })
+    }
+  } finally {
+    await closeDirectoryHandles(parent.handles)
+  }
+
+  await removeEmptyParentDirectories(session, parts)
+}
+
+async function writeManagedFile(session, relativePath, content) {
+  const parts = relativePath.split('/')
+  const name = parts.pop()
+  const parent = await openDirectoryChain(session, parts, true)
+
+  try {
+    const destination = '/proc/self/fd/' + parent.handle.fd + '/' + name
+    const existing = await fs.lstat(destination).catch(error => {
+      if (error.code === 'ENOENT') {
+        return null
+      }
+
+      throw error
+    })
+
+    if (existing?.isDirectory() && !existing.isSymbolicLink()) {
+      throw new Error('terminal path conflict: a file path is a directory')
+    }
+
+    const destinationMode = existing?.isFile()
+      ? existing.mode & 0o777
+      : 0o600
+
+    if (existing?.isFile()) {
+      try {
+        const current = await fs.open(
+          destination,
+          fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+        )
+
+        try {
+          const currentContent = await current.readFile()
+          if (currentContent.toString('utf8') === content) {
+            return
+          }
+        } finally {
+          await current.close()
+        }
+      } catch (error) {
+        if (!['ENOENT', 'ELOOP'].includes(error.code)) {
+          throw error
+        }
+      }
+    }
+
+    const temporaryName = '.poligo-sync-' + randomUUID() + '.tmp'
+    const temporary = '/proc/self/fd/' + parent.handle.fd + '/' + temporaryName
+    let handle
+
+    try {
+      handle = await fs.open(
+        temporary,
+        fsConstants.O_WRONLY |
+          fsConstants.O_CREAT |
+          fsConstants.O_EXCL |
+          fsConstants.O_NOFOLLOW,
+        0o600
+      )
+      await handle.writeFile(content, {
+        encoding: 'utf8'
+      })
+      await handle.chown(session.uid, session.uid)
+      await handle.chmod(destinationMode)
+      await handle.close()
+      handle = null
+      await fs.rename(temporary, destination)
+    } finally {
+      if (handle) {
+        await handle.close().catch(() => {})
+      }
+
+      await fs.rm(temporary, {
+        force: true
+      }).catch(() => {})
+    }
+  } finally {
+    await closeDirectoryHandles(parent.handles)
+  }
+}
+
 export async function getTerminalFiles(id) {
   const terminalId = normalizeId(id)
   const session = sessions.get(terminalId)
@@ -632,8 +891,45 @@ export async function getTerminalFiles(id) {
     throw new Error('terminal session not found')
   }
 
-  session.lastUsedAt = Date.now()
-  return await walkWorkspace(session.workspace, true)
+  return withFileSyncLock(session, async () => {
+    session.lastUsedAt = Date.now()
+    const files = await walkWorkspace(session.workspace, true)
+    session.managedFiles = new Set(Object.keys(files))
+    return files
+  })
+}
+
+export async function applyTerminalFiles(id, files) {
+  const terminalId = normalizeId(id)
+  const session = sessions.get(terminalId)
+
+  if (!session || session.closing) {
+    throw new Error('terminal session not found')
+  }
+
+  const normalized = normalizeFiles(files, true)
+
+  return withFileSyncLock(session, async () => {
+    for (const trackedPath of [...session.managedFiles]) {
+      if (Object.prototype.hasOwnProperty.call(normalized, trackedPath)) {
+        continue
+      }
+
+      await removeManagedFile(session, trackedPath)
+      session.managedFiles.delete(trackedPath)
+    }
+
+    for (const [relativePath, content] of Object.entries(normalized)) {
+      await writeManagedFile(session, relativePath, content)
+      session.managedFiles.add(relativePath)
+    }
+
+    session.lastUsedAt = Date.now()
+
+    return {
+      fileCount: Object.keys(normalized).length
+    }
+  })
 }
 
 async function killUserProcesses(session) {
@@ -665,6 +961,11 @@ async function cleanupSession(session) {
   } catch {}
 
   await killUserProcesses(session)
+
+  if (session.fileSyncQueue) {
+    await session.fileSyncQueue.catch(() => {})
+  }
+
   sessions.delete(session.id)
 
   await resetSlotFilesystem(session.slot).catch(error => {
