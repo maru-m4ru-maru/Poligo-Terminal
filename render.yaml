@@ -12,22 +12,22 @@ services:
       - key: NODE_ENV
         value: production
       - key: TERMINAL_SANDBOX
-        value: bubblewrap
+        value: chroot-seccomp
       - key: RUNNER_TOKEN
         sync: false
       - key: TERMINAL_RUN_ROOT
         value: /tmp/poligo-terminal-sessions
       - key: TERMINAL_MAX_SESSIONS
-        value: "4"
+        value: "2"
       - key: TERMINAL_IDLE_TTL_MS
         value: "1800000"
       - key: TERMINAL_MAX_LIFETIME_MS
-        value: "14400000"
+        value: "3600000"
       - key: TERMINAL_MAX_FILES
         value: "200"
       - key: TERMINAL_MAX_PROJECT_BYTES
         value: "5000000"
       - key: TERMINAL_MAX_WORKSPACE_BYTES
-        value: "402653184"
+        value: "134217728"
       - key: TERMINAL_MAX_WORKSPACE_ENTRIES
-        value: "20000"
+        value: "5000"
