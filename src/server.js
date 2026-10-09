@@ -103,13 +103,13 @@ const server = http.createServer({
     const sandbox = getSandboxStatus()
     const ready = Boolean(runnerToken) && sandbox.ready
 
-    send(response, 200, {
+    send(response, ready ? 200 : 503, {
       status: ready ? 'ok' : 'degraded',
       service: 'poligo-terminal-runner',
       terminalBackend: sandbox.type,
       terminalReady: ready,
       tokenConfigured: Boolean(runnerToken),
-      sandboxReason: sandbox.ready ? undefined : sandbox.reason
+      sandboxReason: sandbox.ready ? undefined : 'secure sandbox initialization failed'
     })
     return
   }
