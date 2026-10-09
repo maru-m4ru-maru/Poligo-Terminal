@@ -273,8 +273,8 @@ async function run() {
 
   const writeFile = await sendAndWait(
     first,
-    "mkdir -p generated && printf 'FILE_SYNC_OK' > generated/output.txt && cat generated/output.txt\n",
-    output => output.includes('FILE_SYNC_OK')
+    "mkdir -p generated && printf 'FILE_SYNC_OK\\n' > generated/output.txt && cat generated/output.txt\n",
+    outputLine('FILE_SYNC_OK')
   )
   assert.ok(writeFile.includes('FILE_SYNC_OK'))
 
@@ -287,7 +287,7 @@ async function run() {
 
   const files = await request('/v1/terminals/' + encodeURIComponent(firstId) + '/files')
   assert.equal(files.status, 200, files.text)
-  assert.equal(files.body?.files?.['generated/output.txt'], 'FILE_SYNC_OK\\n')
+  assert.equal(files.body?.files?.['generated/output.txt'], 'FILE_SYNC_OK\n')
   assert.equal('node_modules/hidden.txt' in files.body.files, false)
   console.log('PASS runtimes, stderr, output limits path, and project file synchronization')
 
@@ -345,13 +345,13 @@ async function run() {
 
   const updated = await sendAndWait(
     first,
-    "printf 'UPDATED_VALUE' >> generated/output.txt && cat generated/output.txt\n",
-    output => output.includes('FILE_SYNC_OKUPDATED_VALUE')
+    "printf 'UPDATED_VALUE\\n' >> generated/output.txt && cat generated/output.txt\n",
+    output => outputLine('FILE_SYNC_OK')(output) && outputLine('UPDATED_VALUE')(output)
   )
-  assert.ok(updated.includes('FILE_SYNC_OKUPDATED_VALUE'))
+  assert.ok(outputLine('FILE_SYNC_OK')(updated) && outputLine('UPDATED_VALUE')(updated))
 
   const finalFiles = await request('/v1/terminals/' + encodeURIComponent(firstId) + '/files')
-  assert.equal(finalFiles.body?.files?.['generated/output.txt'], 'FILE_SYNC_OKUPDATED_VALUE')
+  assert.equal(finalFiles.body?.files?.['generated/output.txt'], 'FILE_SYNC_OK\nUPDATED_VALUE\n')
   console.log('PASS session isolation, Ctrl+C, and persistent in-session file changes')
 
   await closeSession(secondId)
