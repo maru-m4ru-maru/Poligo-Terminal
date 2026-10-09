@@ -1,0 +1,104 @@
+name: Publish Poligo Terminal Runner Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - "src/**"
+      - "package.json"
+      - ".github/workflows/publish-runner-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: poligo-terminal-image
+  cancel-in-progress: true
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Install E2E WebSocket client
+        run: npm install --no-save ws@8.22.0
+
+      - name: Build image
+        run: |
+          docker build \
+            -t ghcr.io/maru-m4ru-maru/poligo-terminal-runner:main \
+            -t ghcr.io/maru-m4ru-maru/poligo-terminal-runner:${GITHUB_SHA} \
+            .
+
+      - name: Start runner
+        run: |
+          docker run -d \
+            --name poligo-terminal-runner-image-test \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            -p 10000:10000 \
+            -e PORT=10000 \
+            -e RUNNER_TOKEN=terminal-process-e2e-token \
+            -e TERMINAL_RUN_ROOT=/tmp/poligo-terminal-sessions \
+            -e TERMINAL_MAX_SESSIONS=4 \
+            -e TERMINAL_IDLE_TTL_MS=60000 \
+            -e TERMINAL_MAX_LIFETIME_MS=300000 \
+            ghcr.io/maru-m4ru-maru/poligo-terminal-runner:main
+
+      - name: Wait for sandbox readiness
+        run: |
+          set -e
+          for attempt in $(seq 1 90); do
+            response=$(curl -sS --max-time 5 http://127.0.0.1:10000/health || true)
+            printf '%s\n' "$response"
+            if printf '%s' "$response" | grep -q '"terminalReady":true'; then
+              exit 0
+            fi
+            if printf '%s' "$response" | grep -q '"terminalReady":false'; then
+              docker logs poligo-terminal-runner-image-test
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs poligo-terminal-runner-image-test
+          exit 1
+
+      - name: Run terminal E2E
+        env:
+          RUNNER_TEST_TOKEN: terminal-process-e2e-token
+          RUNNER_TEST_URL: http://127.0.0.1:10000
+        run: node tests/e2e/test_runner.mjs
+
+      - name: Runner logs
+        if: always()
+        run: docker logs poligo-terminal-runner-image-test
+
+      - name: Stop runner
+        if: always()
+        run: docker rm -f poligo-terminal-runner-image-test
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push tested image
+        run: |
+          docker push ghcr.io/maru-m4ru-maru/poligo-terminal-runner:main
+          docker push ghcr.io/maru-m4ru-maru/poligo-terminal-runner:${GITHUB_SHA}
