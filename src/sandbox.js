@@ -112,7 +112,6 @@ function normalizeFiles(files) {
 function sandboxArguments(workspace, uid) {
   const args = [
     '--die-with-parent',
-    '--new-session',
     '--unshare-user',
     '--unshare-pid',
     '--unshare-net',
@@ -466,11 +465,17 @@ export async function initializeSandbox() {
       reason: ''
     }
   } catch (error) {
+    const details = error instanceof Error
+      ? [
+          error.message,
+          error.code ? 'code=' + error.code : '',
+          typeof error.stderr === 'string' ? error.stderr.trim() : ''
+        ].filter(Boolean).join(' | ').slice(0, 300)
+      : 'bubblewrap namespace probe failed'
+
     sandboxStatus = {
       ready: false,
-      reason: error instanceof Error
-        ? error.message.slice(0, 300)
-        : 'bubblewrap namespace probe failed'
+      reason: details || 'bubblewrap namespace probe failed'
     }
   } finally {
     await fs.rm(probeWorkspace, {
