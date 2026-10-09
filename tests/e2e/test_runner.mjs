@@ -227,6 +227,7 @@ async function run() {
   assert.ok(pwd.includes('/workspace'))
 
   const uid = await sendAndWait(
+    first,
     "id -u; if [ \"$(id -u)\" -gt 0 ] && [ \"$(id -u)\" -lt 60000 ]; then printf 'UNPRIVILEGED_UID_OK\\n'; fi\n",
     outputLine('UNPRIVILEGED_UID_OK')
   )
