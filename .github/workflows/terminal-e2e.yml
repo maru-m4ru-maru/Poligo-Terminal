@@ -46,6 +46,7 @@ jobs:
           docker run -d \
             --name poligo-terminal-runner-e2e \
             --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
             -p 10000:10000 \
             -e PORT=10000 \
             -e RUNNER_TOKEN=terminal-process-e2e-token \
