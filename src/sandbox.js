@@ -465,13 +465,19 @@ export async function initializeSandbox() {
       reason: ''
     }
   } catch (error) {
-    const details = error instanceof Error
-      ? [
-          error.message,
-          error.code ? 'code=' + error.code : '',
-          typeof error.stderr === 'string' ? error.stderr.trim() : ''
-        ].filter(Boolean).join(' | ').slice(0, 300)
-      : 'bubblewrap namespace probe failed'
+    const stderr = Buffer.isBuffer(error?.stderr)
+      ? error.stderr.toString('utf8')
+      : String(error?.stderr || '')
+    const stdout = Buffer.isBuffer(error?.stdout)
+      ? error.stdout.toString('utf8')
+      : String(error?.stdout || '')
+    const details = [
+      error instanceof Error ? error.message : '',
+      error?.code ? 'code=' + error.code : '',
+      error?.signal ? 'signal=' + error.signal : '',
+      stderr.trim(),
+      stdout.trim()
+    ].filter(Boolean).join(' | ').slice(0, 600)
 
     sandboxStatus = {
       ready: false,
