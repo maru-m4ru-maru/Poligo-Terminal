@@ -39,7 +39,7 @@ jobs:
         run: npm install --no-save ws@8.22.0
 
       - name: Build runner image
-        run: docker build -t poligo-terminal-runner-e2e .
+        run: docker build --build-arg INCLUDE_SANDBOX_DEVICES=true -t poligo-terminal-runner-e2e .
 
       - name: Start runner
         run: |
