@@ -251,7 +251,7 @@ async function run() {
   )
   assert.ok(outputLine('NETWORK_ISOLATED')(network))
   assert.ok(!outputLine('NETWORK_NOT_ISOLATED')(network))
-  console.log('PASS PTY, unprivileged UID, filesystem view, and network namespace')
+  console.log('PASS PTY, unprivileged UID, chroot filesystem, and seccomp network denial')
 
   const node = await sendAndWait(
     first,
