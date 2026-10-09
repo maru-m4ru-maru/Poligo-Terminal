@@ -175,14 +175,27 @@ async function createSessionFilesystem(id, uid, files) {
   })
 
   try {
-    await execFileAsync('/bin/cp', [
-      '-al',
-      path.join(rootfsBase, '.'),
-      rootfs
-    ], {
-      timeout: 45_000,
-      maxBuffer: 65_536
-    })
+    const rootEntries = await fs.readdir(rootfsBase)
+
+    for (const entry of rootEntries) {
+      await execFileAsync('/bin/cp', [
+        '-al',
+        path.join(rootfsBase, entry),
+        rootfs
+      ], {
+        timeout: 15_000,
+        maxBuffer: 65_536
+      })
+    }
+
+    for (const required of ['etc', 'usr', 'bin', 'workspace', 'tmp', 'dev']) {
+      const target = path.join(rootfs, required)
+      const stat = await fs.lstat(target).catch(() => null)
+
+      if (!stat) {
+        throw new Error('missing chroot root entry: ' + required)
+      }
+    }
 
     const username = 'poligo' + uid
     await fs.chmod(path.join(rootfs, 'etc'), 0o755)
