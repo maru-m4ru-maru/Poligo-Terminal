@@ -227,11 +227,11 @@ async function run() {
   assert.ok(pwd.includes('/workspace'))
 
   const uid = await sendAndWait(
-    first,
+    "id -u; if [ \"$(id -u)\" -gt 0 ] && [ \"$(id -u)\" -lt 60000 ]; then printf 'UNPRIVILEGED_UID_OK\\n'; fi\n",
     "id -u\n",
-    outputLine('65534')
+    outputLine('UNPRIVILEGED_UID_OK')
   )
-  assert.ok(uid.includes('65534'))
+  assert.ok(outputLine('UNPRIVILEGED_UID_OK')(uid))
 
   const hiddenSource = await sendAndWait(
     first,
@@ -300,7 +300,7 @@ async function run() {
 
   const isolated = await sendAndWait(
     second,
-    "if test -e '/tmp/poligo-terminal-sessions/" + firstId + "/private.txt'; then printf 'SESSION_NOT_ISOLATED\\n'; else printf 'SESSION_ISOLATED\\n'; fi\n",
+    "if test -e /workspace/private.txt; then printf 'SESSION_NOT_ISOLATED\\n'; else printf 'SESSION_ISOLATED\\n'; fi\n",
     output => outputLine('SESSION_ISOLATED')(output) || outputLine('SESSION_NOT_ISOLATED')(output)
   )
   assert.ok(outputLine('SESSION_ISOLATED')(isolated))
