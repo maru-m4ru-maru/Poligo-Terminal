@@ -379,6 +379,47 @@ async function run() {
     'editor-created.txt': 'created by editor\n'
   })
 
+  const nestedEditorSync = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
+    'PUT',
+    {
+      files: {
+        'main.js': 'EDITOR_SYNC_OK\n',
+        'folder/child.txt': 'nested file\n'
+      }
+    }
+  )
+  assert.equal(nestedEditorSync.status, 200, nestedEditorSync.text)
+
+  const nestedEditorFiles = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
+  )
+  assert.deepEqual(nestedEditorFiles.body.files, {
+    'main.js': 'EDITOR_SYNC_OK\n',
+    'folder/child.txt': 'nested file\n'
+  })
+
+  const directoryToFileSync = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
+    'PUT',
+    {
+      files: {
+        'main.js': 'EDITOR_SYNC_OK\n',
+        'folder': 'directory replaced by a file\n'
+      }
+    }
+  )
+  assert.equal(directoryToFileSync.status, 200, directoryToFileSync.text)
+
+  const directoryToFileResult = await request(
+    '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
+  )
+  assert.deepEqual(directoryToFileResult.body.files, {
+    'main.js': 'EDITOR_SYNC_OK\n',
+    'folder': 'directory replaced by a file\n'
+  })
+  console.log('PASS nested directory cleanup and directory-to-file replacement')
+
   const invalidEditorSync = await request(
     '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
     'PUT',
