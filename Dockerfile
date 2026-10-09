@@ -64,7 +64,9 @@ RUN mkdir -p bin /opt/poligo/rootfs/dev /opt/poligo/rootfs/proc /opt/poligo/root
     && chown -R 20001:20001 /opt/poligo/sandbox-slots/slot1/workspace \
     && chown -R 20002:20002 /opt/poligo/sandbox-slots/slot2/workspace \
     && chmod 700 /opt/poligo/sandbox-slots/slot1/workspace /opt/poligo/sandbox-slots/slot2/workspace \
-    && chmod 1777 /opt/poligo/sandbox-slots/slot1/tmp /opt/poligo/sandbox-slots/slot1/var/tmp /opt/poligo/sandbox-slots/slot2/tmp /opt/poligo/sandbox-slots/slot2/var/tmp
+    && chmod 1777 /opt/poligo/sandbox-slots/slot1/tmp /opt/poligo/sandbox-slots/slot1/var/tmp /opt/poligo/sandbox-slots/slot2/tmp /opt/poligo/sandbox-slots/slot2/var/tmp \
+    && chmod 666 /opt/poligo/sandbox-slots/slot1/dev/null /opt/poligo/sandbox-slots/slot1/dev/zero /opt/poligo/sandbox-slots/slot1/dev/full /opt/poligo/sandbox-slots/slot1/dev/random /opt/poligo/sandbox-slots/slot1/dev/urandom /opt/poligo/sandbox-slots/slot1/dev/tty \
+    && chmod 666 /opt/poligo/sandbox-slots/slot2/dev/null /opt/poligo/sandbox-slots/slot2/dev/zero /opt/poligo/sandbox-slots/slot2/dev/full /opt/poligo/sandbox-slots/slot2/dev/random /opt/poligo/sandbox-slots/slot2/dev/urandom /opt/poligo/sandbox-slots/slot2/dev/tty
 
 ENV NODE_ENV=production
 ENV PORT=10000
