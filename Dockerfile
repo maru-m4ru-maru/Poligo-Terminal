@@ -48,7 +48,23 @@ RUN mkdir -p bin /opt/poligo/rootfs/dev /opt/poligo/rootfs/proc /opt/poligo/root
     && chmod 1777 /opt/poligo/rootfs/tmp /opt/poligo/rootfs/var/tmp \
     && if [ "$INCLUDE_SANDBOX_DEVICES" = "true" ]; then \
         chmod 666 /opt/poligo/rootfs/dev/null /opt/poligo/rootfs/dev/zero /opt/poligo/rootfs/dev/full /opt/poligo/rootfs/dev/random /opt/poligo/rootfs/dev/urandom /opt/poligo/rootfs/dev/tty; \
-    fi
+    fi \
+    && mkdir -p /opt/poligo/sandbox-slots/slot1 /opt/poligo/sandbox-slots/slot2 \
+    && cp -a /opt/poligo/rootfs/. /opt/poligo/sandbox-slots/slot1/ \
+    && cp -a /opt/poligo/rootfs/. /opt/poligo/sandbox-slots/slot2/ \
+    && chmod -R a-s /opt/poligo/sandbox-slots \
+    && chmod -R a-w /opt/poligo/sandbox-slots \
+    && chmod 755 /opt/poligo/sandbox-slots/slot1/etc /opt/poligo/sandbox-slots/slot2/etc \
+    && chmod 644 /opt/poligo/sandbox-slots/slot1/etc/passwd /opt/poligo/sandbox-slots/slot1/etc/group /opt/poligo/sandbox-slots/slot2/etc/passwd /opt/poligo/sandbox-slots/slot2/etc/group \
+    && printf 'poligo20001:x:20001:20001:Poligo Terminal:/workspace:/usr/bin/bash\\n' >> /opt/poligo/sandbox-slots/slot1/etc/passwd \
+    && printf 'poligo20001:x:20001:\\n' >> /opt/poligo/sandbox-slots/slot1/etc/group \
+    && printf 'poligo20002:x:20002:20002:Poligo Terminal:/workspace:/usr/bin/bash\\n' >> /opt/poligo/sandbox-slots/slot2/etc/passwd \
+    && printf 'poligo20002:x:20002:\\n' >> /opt/poligo/sandbox-slots/slot2/etc/group \
+    && chmod 444 /opt/poligo/sandbox-slots/slot1/etc/passwd /opt/poligo/sandbox-slots/slot1/etc/group /opt/poligo/sandbox-slots/slot2/etc/passwd /opt/poligo/sandbox-slots/slot2/etc/group \
+    && chown -R 20001:20001 /opt/poligo/sandbox-slots/slot1/workspace \
+    && chown -R 20002:20002 /opt/poligo/sandbox-slots/slot2/workspace \
+    && chmod 700 /opt/poligo/sandbox-slots/slot1/workspace /opt/poligo/sandbox-slots/slot2/workspace \
+    && chmod 1777 /opt/poligo/sandbox-slots/slot1/tmp /opt/poligo/sandbox-slots/slot1/var/tmp /opt/poligo/sandbox-slots/slot2/tmp /opt/poligo/sandbox-slots/slot2/var/tmp
 
 ENV NODE_ENV=production
 ENV PORT=10000
