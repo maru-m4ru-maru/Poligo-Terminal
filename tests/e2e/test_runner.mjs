@@ -379,23 +379,39 @@ async function run() {
     'editor-created.txt': 'created by editor\n'
   })
 
+  const makeExecutable = await sendAndWait(
+    first,
+    "chmod +x editor-created.txt && printf 'EXECUTABLE_READY\\n'\n",
+    outputLine('EXECUTABLE_READY')
+  )
+  assert.ok(makeExecutable.includes('EXECUTABLE_READY'))
+
   const nestedEditorSync = await request(
     '/v1/terminals/' + encodeURIComponent(firstId) + '/files',
     'PUT',
     {
       files: {
         'main.js': 'EDITOR_SYNC_OK\n',
+        'editor-created.txt': 'updated by editor\n',
         'folder/child.txt': 'nested file\n'
       }
     }
   )
   assert.equal(nestedEditorSync.status, 200, nestedEditorSync.text)
 
+  const modePreserved = await sendAndWait(
+    first,
+    "test -x editor-created.txt && printf 'EXECUTABLE_MODE_PRESERVED\\n'\n",
+    outputLine('EXECUTABLE_MODE_PRESERVED')
+  )
+  assert.ok(modePreserved.includes('EXECUTABLE_MODE_PRESERVED'))
+
   const nestedEditorFiles = await request(
     '/v1/terminals/' + encodeURIComponent(firstId) + '/files'
   )
   assert.deepEqual(nestedEditorFiles.body.files, {
     'main.js': 'EDITOR_SYNC_OK\n',
+    'editor-created.txt': 'updated by editor\n',
     'folder/child.txt': 'nested file\n'
   })
 
