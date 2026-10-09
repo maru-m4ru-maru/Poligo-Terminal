@@ -38,7 +38,7 @@ Image-backed Render services do not automatically redeploy when a registry tag c
 
 ## Security and sandbox behavior
 
-Each terminal runs inside its own chroot filesystem view built from a read-only runtime plus its own writable workspace. Sessions receive distinct unprivileged UIDs. A small native launcher enters the chroot, sets `no_new_privs` before dropping privileges, removes supplementary groups, installs a seccomp filter that denies network socket syscalls and namespace/mount privilege paths, and then starts Bash. The chroot runtime is stripped of setuid/setgid bits. Runner application files, API tokens, and host environment secrets are not passed into the shell. Linux CPU, address-space, process-count, file-size, file-count, and workspace-size limits are applied. Project paths are validated, symlinks are skipped during file collection, session count is capped, and idle and maximum-lifetime cleanup is enabled.
+Each terminal runs inside its own prebuilt chroot filesystem slot. The two slots are baked into the image so Render does not need runtime hard links or device-node creation. Each slot contains a read-only runtime and a separate writable workspace and temporary directories. Active sessions receive distinct unprivileged UIDs; the service supports at most two simultaneous sessions per instance. A small native launcher enters the chroot, sets `no_new_privs` before dropping privileges, removes supplementary groups, installs a seccomp filter that denies network socket syscalls and namespace/mount privilege paths, and then starts Bash. The chroot runtime is stripped of setuid/setgid bits. Runner application files, API tokens, and host environment secrets are not passed into the shell. Linux CPU, address-space, process-count, file-size, file-count, and workspace-size limits are applied. Project paths are validated, symlinks are skipped during file collection, session count is capped, and idle and maximum-lifetime cleanup is enabled.
 
 The service fails closed: if the chroot launcher, runtime layout, privilege drop, or seccomp network-denial probe fails, or if `RUNNER_TOKEN` is missing, `/health` returns a non-success status with `terminalReady: false` and new shell sessions are refused. There is no fallback to an unsandboxed shell. Check the live Render health endpoint after deployment before connecting Poligo.
 
@@ -50,7 +50,7 @@ This is defense in depth, not a dedicated VM. It depends on the container kernel
 | --- | --- |
 | `PORT` | HTTP and WebSocket port; defaults to `10000`. |
 | `RUNNER_TOKEN` | Required bearer token for all routes other than `/health`. |
-| `TERMINAL_RUN_ROOT` | Root for temporary terminal workspaces. |
+| `TERMINAL_RUN_ROOT` | Temporary scratch directory used by sandbox-readiness probes. |
 | `TERMINAL_MAX_SESSIONS` | Maximum active sessions per service instance; defaults to `2`. |
 | `TERMINAL_IDLE_TTL_MS` | Idle-session cleanup interval; defaults to 30 minutes. |
 | `TERMINAL_MAX_LIFETIME_MS` | Maximum session lifetime; defaults to 1 hour. |
@@ -74,7 +74,7 @@ Except for `GET /health`, HTTP and WebSocket endpoints require `Authorization: B
 
 Requirements: Docker, Node.js 22, npm, and a Linux host/container that permits chroot, UID/GID changes, and seccomp filters.
 
-The build argument is required to include the sandbox device nodes in the image:
+The build argument is required to include device nodes and the two prebuilt isolated chroot slots in the image:
 
 ```sh
 npm run check
