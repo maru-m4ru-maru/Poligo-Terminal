@@ -18,6 +18,7 @@ COPY package.json ./package.json
 RUN npm install --omit=dev && npm cache clean --force
 
 COPY src ./src
+RUN mkdir -p bin && cc -O2 -Wall -Wextra -Werror src/netfilter-launcher.c -o bin/poligo-sandbox-launcher && rm src/netfilter-launcher.c
 
 ENV NODE_ENV=production
 ENV PORT=10000
