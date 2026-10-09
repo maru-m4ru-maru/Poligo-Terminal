@@ -1,21 +1,22 @@
 import { randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import pty from 'node-pty'
 
-const bwrapPath = '/usr/bin/bwrap'
-const sandboxLauncherPath = '/app/bin/poligo-sandbox-launcher'
+const execFileAsync = promisify(execFile)
+const launcherPath = '/app/bin/poligo-chroot-launcher'
+const rootfsBase = '/opt/poligo/rootfs'
 const workspaceRoot = process.env.TERMINAL_RUN_ROOT || '/tmp/poligo-terminal-sessions'
 const maxFiles = Number(process.env.TERMINAL_MAX_FILES || 200)
 const maxProjectBytes = Number(process.env.TERMINAL_MAX_PROJECT_BYTES || 5_000_000)
-const maxWorkspaceBytes = Number(process.env.TERMINAL_MAX_WORKSPACE_BYTES || 384 * 1024 * 1024)
-const maxWorkspaceEntries = Number(process.env.TERMINAL_MAX_WORKSPACE_ENTRIES || 20_000)
+const maxWorkspaceBytes = Number(process.env.TERMINAL_MAX_WORKSPACE_BYTES || 134_217_728)
+const maxWorkspaceEntries = Number(process.env.TERMINAL_MAX_WORKSPACE_ENTRIES || 5_000)
 const maxOutputBytes = Number(process.env.TERMINAL_MAX_OUTPUT_BYTES || 65_536)
-const maxSessions = Number(process.env.TERMINAL_MAX_SESSIONS || 4)
+const maxSessions = Number(process.env.TERMINAL_MAX_SESSIONS || 2)
 const idleTtlMs = Number(process.env.TERMINAL_IDLE_TTL_MS || 30 * 60 * 1000)
-const maxLifetimeMs = Number(process.env.TERMINAL_MAX_LIFETIME_MS || 4 * 60 * 60 * 1000)
-const sandboxUid = 65534
+const maxLifetimeMs = Number(process.env.TERMINAL_MAX_LIFETIME_MS || 60 * 60 * 1000)
 const maxSocketBufferBytes = 1_048_576
 const ignoredDirectories = new Set([
   '.git',
@@ -26,7 +27,9 @@ const ignoredDirectories = new Set([
 ])
 
 const sessions = new Map()
+const reservedUids = new Set()
 let pendingCreates = 0
+let nextUid = 20_000
 let sandboxStatus = {
   ready: false,
   reason: 'sandbox has not been initialized'
@@ -108,161 +111,126 @@ function normalizeFiles(files) {
   return normalized
 }
 
-function sandboxArguments(workspace, uid) {
-  const args = [
-    '--die-with-parent',
-    '--unshare-user',
-    '--unshare-pid',
-    '--unshare-ipc',
-    '--unshare-uts',
-    '--uid',
-    String(uid),
-    '--gid',
-    String(uid),
-    '--hostname',
-    'poligo-terminal',
-    '--ro-bind',
-    '/usr',
-    '/usr',
-    '--symlink',
-    'usr/bin',
-    '/bin',
-    '--symlink',
-    'usr/sbin',
-    '/sbin'
-  ]
+function allocateUid() {
+  for (let attempt = 0; attempt < 40_000; attempt += 1) {
+    const uid = nextUid
+    nextUid += 1
 
-  if (existsSync('/usr/lib')) {
-    args.push('--symlink', 'usr/lib', '/lib')
+    if (nextUid > 59_999) {
+      nextUid = 20_000
+    }
+
+    if (reservedUids.has(uid)) {
+      continue
+    }
+
+    reservedUids.add(uid)
+    return uid
   }
 
-  if (existsSync('/usr/lib64')) {
-    args.push('--symlink', 'usr/lib64', '/lib64')
-  }
-
-  args.push(
-    '--ro-bind',
-    '/etc',
-    '/etc',
-    '--proc',
-    '/proc',
-    '--dev',
-    '/dev',
-    '--dir',
-    '/tmp',
-    '--bind',
-    path.join(workspace, '.terminal-cache', 'tmp'),
-    '/tmp',
-    '--dir',
-    '/workspace',
-    '--bind',
-    workspace,
-    '/workspace',
-    '--dir',
-    '/run',
-    '--dir',
-    '/home',
-    '--chdir',
-    '/workspace',
-    '--clearenv',
-    '--setenv',
-    'PATH',
-    '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-    '--setenv',
-    'HOME',
-    '/workspace',
-    '--setenv',
-    'USER',
-    'poligo',
-    '--setenv',
-    'LOGNAME',
-    'poligo',
-    '--setenv',
-    'SHELL',
-    '/bin/bash',
-    '--setenv',
-    'TERM',
-    'xterm-256color',
-    '--setenv',
-    'COLORTERM',
-    'truecolor',
-    '--setenv',
-    'LANG',
-    'C.UTF-8',
-    '--setenv',
-    'LC_ALL',
-    'C.UTF-8',
-    '--setenv',
-    'TMPDIR',
-    '/tmp',
-    '--setenv',
-    'NPM_CONFIG_CACHE',
-    '/workspace/.terminal-cache/npm',
-    '--setenv',
-    'XDG_CACHE_HOME',
-    '/workspace/.terminal-cache',
-    '--setenv',
-    'PS1',
-    '\\u@poligo:\\w\\$ ',
-    '--cap-drop',
-    'ALL'
-  )
-
-  return args
+  throw new Error('terminal user pool is exhausted')
 }
 
-
-async function makeWorkspace(id, files) {
-  const workspace = path.join(workspaceRoot, id)
-  await fs.mkdir(workspace, {
-    recursive: true,
-    mode: 0o700
-  })
-  await fs.chmod(workspace, 0o700)
-
-  await fs.mkdir(path.join(workspace, '.terminal-cache', 'tmp'), {
-    recursive: true,
-    mode: 0o700
-  })
-
-  for (const [name, content] of Object.entries(files)) {
-    const destination = path.join(workspace, name)
-    await fs.mkdir(path.dirname(destination), {
-      recursive: true,
-      mode: 0o700
-    })
-    await fs.writeFile(destination, content, {
-      encoding: 'utf8',
-      mode: 0o600,
-      flag: 'wx'
-    })
-  }
-
-  await setWorkspaceOwnership(workspace)
-
-  return workspace
-}
-
-async function setWorkspaceOwnership(workspace) {
-  const entries = await fs.readdir(workspace, {
+async function setWorkspaceOwnership(directory, uid) {
+  const entries = await fs.readdir(directory, {
     withFileTypes: true
   })
 
   for (const entry of entries) {
-    const target = path.join(workspace, entry.name)
+    const target = path.join(directory, entry.name)
+
+    if (entry.isSymbolicLink()) {
+      continue
+    }
 
     if (entry.isDirectory()) {
-      await setWorkspaceOwnership(target)
-      await fs.chown(target, sandboxUid, sandboxUid)
+      await setWorkspaceOwnership(target, uid)
+      await fs.chown(target, uid, uid)
       continue
     }
 
     if (entry.isFile()) {
-      await fs.chown(target, sandboxUid, sandboxUid)
+      await fs.chown(target, uid, uid)
     }
   }
 
-  await fs.chown(workspace, sandboxUid, sandboxUid)
+  await fs.chown(directory, uid, uid)
+}
+
+async function writeSessionAccountFile(rootfs, filename, line) {
+  const baseFile = path.join(rootfsBase, 'etc', filename)
+  const targetFile = path.join(rootfs, 'etc', filename)
+
+  await fs.unlink(targetFile)
+  await fs.copyFile(baseFile, targetFile)
+  await fs.appendFile(targetFile, line, 'utf8')
+  await fs.chmod(targetFile, 0o444)
+}
+
+async function createSessionFilesystem(id, uid, files) {
+  const rootfs = path.join(workspaceRoot, id)
+  await fs.mkdir(rootfs, {
+    recursive: false,
+    mode: 0o700
+  })
+
+  try {
+    await execFileAsync('/bin/cp', [
+      '-al',
+      path.join(rootfsBase, '.'),
+      rootfs
+    ], {
+      timeout: 45_000,
+      maxBuffer: 65_536
+    })
+
+    const username = 'poligo' + uid
+    await writeSessionAccountFile(
+      rootfs,
+      'passwd',
+      username + ':x:' + uid + ':' + uid + ':Poligo Terminal:/workspace:/usr/bin/bash\n'
+    )
+    await writeSessionAccountFile(
+      rootfs,
+      'group',
+      username + ':x:' + uid + ':\n'
+    )
+
+    const workspace = path.join(rootfs, 'workspace')
+    await fs.chmod(workspace, 0o700)
+    await fs.chown(workspace, uid, uid)
+    await fs.mkdir(path.join(workspace, '.terminal-cache', 'tmp'), {
+      recursive: true,
+      mode: 0o700
+    })
+
+    for (const [name, content] of Object.entries(files)) {
+      const destination = path.join(workspace, name)
+      await fs.mkdir(path.dirname(destination), {
+        recursive: true,
+        mode: 0o700
+      })
+      await fs.writeFile(destination, content, {
+        encoding: 'utf8',
+        mode: 0o600,
+        flag: 'wx'
+      })
+    }
+
+    await setWorkspaceOwnership(workspace, uid)
+
+    return {
+      rootfs,
+      workspace,
+      username
+    }
+  } catch (error) {
+    await fs.rm(rootfs, {
+      recursive: true,
+      force: true
+    }).catch(() => {})
+    throw error
+  }
 }
 
 async function walkWorkspace(workspace, includeFiles) {
@@ -315,8 +283,16 @@ async function walkWorkspace(workspace, includeFiles) {
         throw new Error('terminal project files exceed the sync limit')
       }
 
+      let safePath
+
+      try {
+        safePath = normalizeFilePath(relative)
+      } catch {
+        continue
+      }
+
       if (stat.size === 0) {
-        files[relative] = ''
+        files[safePath] = ''
         continue
       }
 
@@ -326,7 +302,7 @@ async function walkWorkspace(workspace, includeFiles) {
         continue
       }
 
-      files[relative] = content.toString('utf8')
+      files[safePath] = content.toString('utf8')
     }
   }
 
@@ -357,17 +333,18 @@ function appendOutput(session, data) {
 
 function createPty(session) {
   const limits = [
-    '--cpu=120:120',
-    '--as=536870912:536870912',
+    '--cpu=60:60',
+    '--as=4294967296:4294967296',
     '--nproc=64:64',
-    '--nofile=256:256',
-    '--fsize=104857600:104857600',
+    '--nofile=128:128',
+    '--fsize=52428800:52428800',
+    '--core=0:0',
     '--',
-    sandboxLauncherPath,
-    bwrapPath,
-    ...sandboxArguments(session.workspace, sandboxUid),
-    '--',
-    '/bin/bash',
+    launcherPath,
+    session.rootfs,
+    String(session.uid),
+    String(session.uid),
+    '/usr/bin/bash',
     '--noprofile',
     '--norc',
     '-i'
@@ -381,8 +358,18 @@ function createPty(session) {
     env: {
       PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
       TERM: 'xterm-256color',
-      HOME: session.workspace,
-      TMPDIR: path.join(session.workspace, '.terminal-cache', 'tmp'),
+      COLORTERM: 'truecolor',
+      LANG: 'C.UTF-8',
+      LC_ALL: 'C.UTF-8',
+      HOME: '/workspace',
+      USER: session.username,
+      LOGNAME: session.username,
+      SHELL: '/usr/bin/bash',
+      PWD: '/workspace',
+      TMPDIR: '/tmp',
+      NPM_CONFIG_CACHE: '/workspace/.terminal-cache/npm',
+      XDG_CACHE_HOME: '/workspace/.terminal-cache',
+      PS1: '\\u@poligo:\\w\\$ '
     }
   })
 
@@ -405,6 +392,101 @@ function createPty(session) {
   return terminal
 }
 
+function runProbe(command, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: workspaceRoot,
+      env: {
+        PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+      },
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    let stdout = ''
+    let stderr = ''
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+    }, timeoutMs)
+
+    child.stdout.on('data', chunk => {
+      if (stdout.length < 4_096) {
+        stdout += chunk.toString('utf8').slice(0, 4_096 - stdout.length)
+      }
+    })
+
+    child.stderr.on('data', chunk => {
+      if (stderr.length < 4_096) {
+        stderr += chunk.toString('utf8').slice(0, 4_096 - stderr.length)
+      }
+    })
+
+    child.once('error', error => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout)
+      resolve({
+        code,
+        signal,
+        stdout,
+        stderr
+      })
+    })
+  })
+}
+
+async function runSandboxProbe(rootfs, uid) {
+  const limits = [
+    '--cpu=5:5',
+    '--as=4294967296:4294967296',
+    '--nproc=16:16',
+    '--nofile=128:128',
+    '--core=0:0',
+    '--',
+    launcherPath,
+    rootfs,
+    String(uid),
+    String(uid)
+  ]
+
+  const identity = await runProbe('/usr/bin/prlimit', [
+    ...limits,
+    '/usr/bin/id',
+    '-u'
+  ], 8_000)
+
+  if (identity.code !== 0 || identity.stdout.trim() !== String(uid)) {
+    throw new Error([
+      'chroot privilege-drop probe failed',
+      'exit=' + identity.code,
+      identity.signal ? 'signal=' + identity.signal : '',
+      identity.stderr.trim(),
+      identity.stdout.trim()
+    ].filter(Boolean).join(' | ').slice(0, 600))
+  }
+
+  const network = await runProbe('/usr/bin/prlimit', [
+    ...limits,
+    '/usr/bin/python3',
+    '-c',
+    'import socket; socket.socket()'
+  ], 8_000)
+
+  if (
+    network.code === 0 ||
+    !network.stderr.includes('PermissionError')
+  ) {
+    throw new Error([
+      'seccomp network-denial probe failed',
+      'exit=' + network.code,
+      network.signal ? 'signal=' + network.signal : '',
+      network.stderr.trim(),
+      network.stdout.trim()
+    ].filter(Boolean).join(' | ').slice(0, 600))
+  }
+}
+
 export async function initializeSandbox() {
   if (process.getuid?.() !== 0) {
     sandboxStatus = {
@@ -414,119 +496,59 @@ export async function initializeSandbox() {
     return sandboxStatus
   }
 
-  if (!existsSync(bwrapPath)) {
+  if (
+    !existsSync(launcherPath) ||
+    !existsSync(path.join(rootfsBase, 'usr', 'bin', 'bash')) ||
+    !existsSync(path.join(rootfsBase, 'usr', 'bin', 'python3')) ||
+    !existsSync(path.join(rootfsBase, 'workspace')) ||
+    !existsSync('/usr/bin/prlimit') ||
+    !existsSync('/usr/bin/pkill')
+  ) {
     sandboxStatus = {
       ready: false,
-      reason: 'bubblewrap is not installed'
+      reason: 'chroot runtime or launcher is not installed'
     }
     return sandboxStatus
   }
 
   const probeId = 'sandbox-probe-' + randomUUID()
-  const probeWorkspace = path.join(workspaceRoot, probeId)
+  const probeUid = 30001
+  let probeRootfs = ''
 
   try {
-    await fs.mkdir(path.join(probeWorkspace, '.terminal-cache', 'tmp'), {
+    await fs.mkdir(workspaceRoot, {
       recursive: true,
-      mode: 0o700
+      mode: 0o711
     })
-    await setWorkspaceOwnership(probeWorkspace)
+    await fs.chmod(workspaceRoot, 0o711)
 
-    const result = await new Promise((resolve, reject) => {
-      const child = spawn('/usr/bin/prlimit', [
-        '--cpu=5:5',
-        '--as=268435456:268435456',
-        '--nproc=16:16',
-        '--nofile=128:128',
-        '--',
-        sandboxLauncherPath,
-        bwrapPath,
-        ...sandboxArguments(probeWorkspace, sandboxUid),
-        '--',
-        '/usr/bin/id',
-        '-u'
-      ], {
-        env: {
-          PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-      let stdout = ''
-      let stderr = ''
-      const timeout = setTimeout(() => {
-        child.kill('SIGKILL')
-      }, 8_000)
-
-      child.stdout.on('data', chunk => {
-        if (stdout.length < 4_096) {
-          stdout += chunk.toString('utf8').slice(0, 4_096 - stdout.length)
-        }
-      })
-
-      child.stderr.on('data', chunk => {
-        if (stderr.length < 4_096) {
-          stderr += chunk.toString('utf8').slice(0, 4_096 - stderr.length)
-        }
-      })
-
-      child.once('error', error => {
-        clearTimeout(timeout)
-        reject(error)
-      })
-
-      child.once('close', (code, signal) => {
-        clearTimeout(timeout)
-        resolve({
-          code,
-          signal,
-          stdout,
-          stderr
-        })
-      })
+    const created = await createSessionFilesystem(probeId, probeUid, {
+      'probe.txt': 'probe\n'
     })
+    probeRootfs = created.rootfs
 
-    if (result.code !== 0) {
-      throw new Error([
-        'bubblewrap probe failed',
-        'exit=' + result.code,
-        result.signal ? 'signal=' + result.signal : '',
-        result.stderr.trim(),
-        result.stdout.trim()
-      ].filter(Boolean).join(' | ').slice(0, 600))
-    }
-
-    if (result.stdout.trim() !== String(sandboxUid)) {
-      throw new Error('isolated user namespace returned an unexpected uid: ' + result.stdout.trim())
-    }
+    await runSandboxProbe(probeRootfs, probeUid)
 
     sandboxStatus = {
       ready: true,
       reason: ''
     }
   } catch (error) {
-    const stderr = Buffer.isBuffer(error?.stderr)
-      ? error.stderr.toString('utf8')
-      : String(error?.stderr || '')
-    const stdout = Buffer.isBuffer(error?.stdout)
-      ? error.stdout.toString('utf8')
-      : String(error?.stdout || '')
     const details = [
-      error instanceof Error ? error.message : '',
-      error?.code ? 'code=' + error.code : '',
-      error?.signal ? 'signal=' + error.signal : '',
-      stderr.trim(),
-      stdout.trim()
+      error instanceof Error ? error.message : String(error)
     ].filter(Boolean).join(' | ').slice(0, 600)
 
     sandboxStatus = {
       ready: false,
-      reason: details || 'bubblewrap namespace probe failed'
+      reason: details || 'chroot sandbox probe failed'
     }
   } finally {
-    await fs.rm(probeWorkspace, {
-      recursive: true,
-      force: true
-    }).catch(() => {})
+    if (probeRootfs) {
+      await fs.rm(probeRootfs, {
+        recursive: true,
+        force: true
+      }).catch(() => {})
+    }
   }
 
   if (!sandboxStatus.ready) {
@@ -541,7 +563,7 @@ export async function initializeSandbox() {
 export function getSandboxStatus() {
   return {
     ready: sandboxStatus.ready,
-    type: 'bubblewrap-user-pid-mount-namespaces-seccomp-network-deny',
+    type: 'chroot-unique-uid-seccomp-network-deny',
     reason: sandboxStatus.reason
   }
 }
@@ -563,20 +585,19 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
   }
 
   pendingCreates += 1
-  let workspace
+  const uid = allocateUid()
+  let rootfs = ''
 
   try {
-    await fs.mkdir(workspaceRoot, {
-      recursive: true,
-      mode: 0o711
-    })
-    await fs.chmod(workspaceRoot, 0o711)
-
-    workspace = await makeWorkspace(terminalId, normalized)
+    const created = await createSessionFilesystem(terminalId, uid, normalized)
+    rootfs = created.rootfs
 
     const session = {
       id: terminalId,
-      workspace,
+      uid,
+      username: created.username,
+      rootfs,
+      workspace: created.workspace,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       exitedAt: null,
@@ -592,10 +613,7 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
       session.terminal = createPty(session)
     } catch (error) {
       sessions.delete(terminalId)
-      await fs.rm(workspace, {
-        recursive: true,
-        force: true
-      })
+      await cleanupSession(session)
       throw error
     }
 
@@ -603,6 +621,16 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
       id: terminalId,
       createdAt: new Date(session.createdAt).toISOString()
     }
+  } catch (error) {
+    if (rootfs) {
+      await fs.rm(rootfs, {
+        recursive: true,
+        force: true
+      }).catch(() => {})
+    }
+
+    reservedUids.delete(uid)
+    throw error
   } finally {
     pendingCreates -= 1
   }
@@ -620,6 +648,45 @@ export async function getTerminalFiles(id) {
   return await walkWorkspace(session.workspace, true)
 }
 
+async function killUserProcesses(session) {
+  try {
+    await execFileAsync('/usr/bin/pkill', [
+      '-KILL',
+      '-u',
+      String(session.uid)
+    ], {
+      timeout: 5_000,
+      maxBuffer: 4_096
+    })
+  } catch {}
+}
+
+async function cleanupSession(session) {
+  if (session.cleanupStarted) {
+    return
+  }
+
+  session.cleanupStarted = true
+
+  if (session.socket?.readyState === 1) {
+    session.socket.close(1000, 'terminal session closed')
+  }
+
+  try {
+    session.terminal?.kill('SIGKILL')
+  } catch {}
+
+  await killUserProcesses(session)
+  sessions.delete(session.id)
+
+  await fs.rm(session.rootfs, {
+    recursive: true,
+    force: true
+  }).catch(() => {})
+
+  reservedUids.delete(session.uid)
+}
+
 export async function closeTerminal(id) {
   const terminalId = normalizeId(id)
   const session = sessions.get(terminalId)
@@ -633,20 +700,7 @@ export async function closeTerminal(id) {
   }
 
   session.closing = true
-  sessions.delete(terminalId)
-
-  if (session.socket?.readyState === 1) {
-    session.socket.close(1000, 'terminal session closed')
-  }
-
-  try {
-    session.terminal?.kill('SIGKILL')
-  } catch {}
-
-  await fs.rm(session.workspace, {
-    recursive: true,
-    force: true
-  })
+  await cleanupSession(session)
 }
 
 export function attachTerminalSocket(id, socket) {
@@ -752,6 +806,6 @@ const cleanupTimer = setInterval(() => {
       void closeTerminal(session.id).catch(() => {})
     })
   }
-}, 15_000)
+}, 5_000)
 
 cleanupTimer.unref?.()
