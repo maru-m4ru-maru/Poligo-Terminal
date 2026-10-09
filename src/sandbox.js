@@ -1,11 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { execFile } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
-import { promisify } from 'node:util'
 import pty from 'node-pty'
 
-const execFileAsync = promisify(execFile)
 const bwrapPath = '/usr/bin/bwrap'
 const workspaceRoot = process.env.TERMINAL_RUN_ROOT || '/tmp/poligo-terminal-sessions'
 const maxFiles = Number(process.env.TERMINAL_MAX_FILES || 200)
@@ -433,9 +431,8 @@ export async function initializeSandbox() {
     })
     await setWorkspaceOwnership(probeWorkspace)
 
-    const result = await execFileAsync(
-      '/usr/bin/prlimit',
-      [
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn('/usr/bin/prlimit', [
         '--cpu=5:5',
         '--as=268435456:268435456',
         '--nproc=16:16',
@@ -446,18 +443,58 @@ export async function initializeSandbox() {
         '--',
         '/usr/bin/id',
         '-u'
-      ],
-      {
-        timeout: 8_000,
-        maxBuffer: 4_096,
+      ], {
         env: {
           PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+        },
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      let stdout = ''
+      let stderr = ''
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL')
+      }, 8_000)
+
+      child.stdout.on('data', chunk => {
+        if (stdout.length < 4_096) {
+          stdout += chunk.toString('utf8').slice(0, 4_096 - stdout.length)
         }
-      }
-    )
+      })
+
+      child.stderr.on('data', chunk => {
+        if (stderr.length < 4_096) {
+          stderr += chunk.toString('utf8').slice(0, 4_096 - stderr.length)
+        }
+      })
+
+      child.once('error', error => {
+        clearTimeout(timeout)
+        reject(error)
+      })
+
+      child.once('close', (code, signal) => {
+        clearTimeout(timeout)
+        resolve({
+          code,
+          signal,
+          stdout,
+          stderr
+        })
+      })
+    })
+
+    if (result.code !== 0) {
+      throw new Error([
+        'bubblewrap probe failed',
+        'exit=' + result.code,
+        result.signal ? 'signal=' + result.signal : '',
+        result.stderr.trim(),
+        result.stdout.trim()
+      ].filter(Boolean).join(' | ').slice(0, 600))
+    }
 
     if (result.stdout.trim() !== String(sandboxUid)) {
-      throw new Error('isolated user namespace returned an unexpected uid')
+      throw new Error('isolated user namespace returned an unexpected uid: ' + result.stdout.trim())
     }
 
     sandboxStatus = {
