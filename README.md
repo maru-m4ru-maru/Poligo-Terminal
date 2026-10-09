@@ -4,14 +4,37 @@ Standalone authenticated WebSocket terminal service for Poligo. The service is i
 
 ## Render deployment
 
-1. In the **Poligo-Terminal** Render workspace, create a Web Service from this repository.
-2. Use the included `render.yaml` Blueprint, or select Docker with the repository root as the build context and `Dockerfile` as the Dockerfile.
-3. Set `RUNNER_TOKEN` to a strong random secret in Render. Do not commit it or paste it into GitHub.
-4. Deploy and inspect `https://poligo-terminal-runner.onrender.com/health`. Do not connect Poligo until the JSON response contains `"terminalReady": true`.
-5. In the existing Poligo API service, set `TERMINAL_RUNNER_URL=https://poligo-terminal-runner.onrender.com` and `TERMINAL_RUNNER_TOKEN` to the exact same secret as the Runner's `RUNNER_TOKEN`.
-6. Leave the existing `RUNNER_URL` and `RUNNER_TOKEN` values unchanged. They continue to power language execution. The API has separate configuration for terminal traffic, with a fallback to the old settings until the new values are supplied.
+**Deploy the published image, not a Git-backed Render Docker build.** The sandbox needs character-device nodes inside its chroot. Render currently rejects `mknod` both during image builds and at runtime, so a Git-backed deployment cannot initialize the sandbox and must remain unavailable.
 
-The Runner is deployed in a separate Render workspace and is accessed through its public HTTPS/WSS address using a bearer token. Free Render services cannot receive private-network traffic. The bearer token must be kept secret and rotated in both Render services together.
+### Build and publish the image
+
+The `.github/workflows/publish-runner-image.yml` workflow builds the image with the required device nodes, checks readiness, runs terminal E2E tests, and publishes the tested image to:
+
+```text
+ghcr.io/maru-m4ru-maru/poligo-terminal-runner:main
+```
+
+A commit-specific tag is published alongside `main`. The workflow only pushes an image after its sandbox and E2E checks pass. The token is supplied at runtime and is not embedded in the image.
+
+Make the GitHub Container Registry package public if Render should pull it without registry credentials. Package settings: https://github.com/users/maru-m4ru-maru/packages/container/poligo-terminal-runner/settings. If you keep the package private, configure a GitHub Container Registry credential in Render with a token that has `read:packages`.
+
+### Create the Render service
+
+1. In the Render dashboard, select **New + → Web Service → Existing Image**. Do not select the Git repository as the source.
+2. Use `ghcr.io/maru-m4ru-maru/poligo-terminal-runner:main` as the image URL.
+3. Use the Oregon region and Free plan, matching the existing Poligo services.
+4. Set the health check path to `/health`. Leave the Docker command unset so the image's `CMD` starts the server.
+5. Set `RUNNER_TOKEN` to a strong random secret in the Render environment dashboard. Do not commit it or paste it into GitHub.
+6. Deploy and check the actual URL Render assigns. The health endpoint must return HTTP 200 and JSON containing `"terminalReady": true` before the service is connected to Poligo.
+
+In the existing Poligo API service, set:
+
+- `TERMINAL_RUNNER_URL` to the new image-backed Render service URL.
+- `TERMINAL_RUNNER_TOKEN` to the exact same secret as the image-backed service's `RUNNER_TOKEN`.
+
+Leave the existing `RUNNER_URL` and `RUNNER_TOKEN` values unchanged. They still power language execution. Terminal traffic has separate configuration so it can use a separate runner and secret.
+
+Image-backed Render services do not automatically redeploy when a registry tag changes. After the publisher workflow pushes a newer `main` image, manually deploy the latest image reference in Render. Use a commit-specific image tag when you need to pin a specific tested build.
 
 ## Security and sandbox behavior
 
@@ -27,7 +50,6 @@ This is defense in depth, not a dedicated VM. It depends on the container kernel
 | --- | --- |
 | `PORT` | HTTP and WebSocket port; defaults to `10000`. |
 | `RUNNER_TOKEN` | Required bearer token for all routes other than `/health`. |
-| `TERMINAL_SANDBOX` | The native chroot/seccomp launcher is built into the image. |
 | `TERMINAL_RUN_ROOT` | Root for temporary terminal workspaces. |
 | `TERMINAL_MAX_SESSIONS` | Maximum active sessions per service instance; defaults to `2`. |
 | `TERMINAL_IDLE_TTL_MS` | Idle-session cleanup interval; defaults to 30 minutes. |
@@ -37,8 +59,6 @@ This is defense in depth, not a dedicated VM. It depends on the container kernel
 | `TERMINAL_MAX_WORKSPACE_BYTES` | Maximum live workspace size; defaults to 128 MiB. |
 | `TERMINAL_MAX_WORKSPACE_ENTRIES` | Maximum workspace file and directory entries; defaults to `5000`. |
 | `MAX_REQUEST_BYTES` | Maximum HTTP request body; defaults to about 8 MB. |
-
-The Render Blueprint leaves `RUNNER_TOKEN` unsynchronized so it has to be configured in the Render dashboard. The token must match `TERMINAL_RUNNER_TOKEN` in the Poligo API.
 
 ## API
 
@@ -54,10 +74,12 @@ Except for `GET /health`, HTTP and WebSocket endpoints require `Authorization: B
 
 Requirements: Docker, Node.js 22, npm, and a Linux host/container that permits chroot, UID/GID changes, and seccomp filters.
 
+The build argument is required to include the sandbox device nodes in the image:
+
 ```sh
 npm run check
 npm install --no-save ws@8.22.0
-docker build -t poligo-terminal-runner .
+docker build --build-arg INCLUDE_SANDBOX_DEVICES=true -t poligo-terminal-runner .
 docker run --rm -p 10000:10000 -e PORT=10000 -e RUNNER_TOKEN=local-test-token -e TERMINAL_RUN_ROOT=/tmp/poligo-terminal-sessions poligo-terminal-runner
 ```
 
@@ -75,4 +97,4 @@ Render Free web services spin down after 15 minutes without inbound HTTP request
 
 ## CI
 
-The `.github/workflows/terminal-e2e.yml` workflow checks JavaScript syntax, builds the Docker image, confirms sandbox readiness, and exercises authentication, chroot filesystem isolation, per-session UIDs, seccomp network denial, Node.js/Python command execution, PTY input/output, Ctrl+C, project file synchronization, and session cleanup.
+The `.github/workflows/terminal-e2e.yml` workflow checks syntax and E2E behavior. The `.github/workflows/publish-runner-image.yml` workflow builds the image with the sandbox devices, verifies readiness, runs the same E2E suite, and only then pushes the tested image to GHCR.
