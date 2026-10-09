@@ -5,6 +5,7 @@ import path from 'node:path'
 import pty from 'node-pty'
 
 const bwrapPath = '/usr/bin/bwrap'
+const sandboxLauncherPath = '/app/bin/poligo-sandbox-launcher'
 const workspaceRoot = process.env.TERMINAL_RUN_ROOT || '/tmp/poligo-terminal-sessions'
 const maxFiles = Number(process.env.TERMINAL_MAX_FILES || 200)
 const maxProjectBytes = Number(process.env.TERMINAL_MAX_PROJECT_BYTES || 5_000_000)
@@ -112,7 +113,6 @@ function sandboxArguments(workspace, uid) {
     '--die-with-parent',
     '--unshare-user',
     '--unshare-pid',
-    '--unshare-net',
     '--unshare-ipc',
     '--unshare-uts',
     '--uid',
@@ -363,7 +363,8 @@ function createPty(session) {
     '--nofile=256:256',
     '--fsize=104857600:104857600',
     '--',
-    '/usr/bin/bwrap',
+    sandboxLauncherPath,
+    bwrapPath,
     ...sandboxArguments(session.workspace, sandboxUid),
     '--',
     '/bin/bash',
@@ -438,6 +439,7 @@ export async function initializeSandbox() {
         '--nproc=16:16',
         '--nofile=128:128',
         '--',
+        sandboxLauncherPath,
         bwrapPath,
         ...sandboxArguments(probeWorkspace, sandboxUid),
         '--',
@@ -539,7 +541,7 @@ export async function initializeSandbox() {
 export function getSandboxStatus() {
   return {
     ready: sandboxStatus.ready,
-    type: 'bubblewrap-user-pid-network-mount-namespaces',
+    type: 'bubblewrap-user-pid-mount-namespaces-seccomp-network-deny',
     reason: sandboxStatus.reason
   }
 }
