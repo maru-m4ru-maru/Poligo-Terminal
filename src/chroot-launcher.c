@@ -130,6 +130,42 @@ static void build_filter(void) {
 #ifdef __NR_setns
   deny_syscall(__NR_setns, EPERM);
 #endif
+#ifdef __NR_chroot
+  deny_syscall(__NR_chroot, EPERM);
+#endif
+#ifdef __NR_setuid
+  deny_syscall(__NR_setuid, EPERM);
+#endif
+#ifdef __NR_setreuid
+  deny_syscall(__NR_setreuid, EPERM);
+#endif
+#ifdef __NR_setresuid
+  deny_syscall(__NR_setresuid, EPERM);
+#endif
+#ifdef __NR_setfsuid
+  deny_syscall(__NR_setfsuid, EPERM);
+#endif
+#ifdef __NR_setgid
+  deny_syscall(__NR_setgid, EPERM);
+#endif
+#ifdef __NR_setregid
+  deny_syscall(__NR_setregid, EPERM);
+#endif
+#ifdef __NR_setresgid
+  deny_syscall(__NR_setresgid, EPERM);
+#endif
+#ifdef __NR_setfsgid
+  deny_syscall(__NR_setfsgid, EPERM);
+#endif
+#ifdef __NR_setgroups
+  deny_syscall(__NR_setgroups, EPERM);
+#endif
+#ifdef __NR_capset
+  deny_syscall(__NR_capset, EPERM);
+#endif
+#ifdef __NR_seccomp
+  deny_syscall(__NR_seccomp, EPERM);
+#endif
 #ifdef __NR_mount
   deny_syscall(__NR_mount, EPERM);
 #endif
