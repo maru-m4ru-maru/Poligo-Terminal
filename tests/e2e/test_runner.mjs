@@ -87,7 +87,10 @@ function openSocket(id) {
 }
 
 function outputLine(marker) {
-  return output => output.split(/\r?\n/).some(line => line.trim() === marker)
+  return output => output
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .split(/[\r\n]+/)
+    .some(line => line.trim() === marker)
 }
 
 function sendAndWait(socket, data, predicate, timeoutMs = 15_000) {
