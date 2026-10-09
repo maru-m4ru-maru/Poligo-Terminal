@@ -9,12 +9,26 @@ const execFileAsync = promisify(execFile)
 const launcherPath = '/app/bin/poligo-chroot-launcher'
 const rootfsBase = '/opt/poligo/rootfs'
 const workspaceRoot = process.env.TERMINAL_RUN_ROOT || '/tmp/poligo-terminal-sessions'
+const sandboxSlots = [
+  {
+    name: 'slot1',
+    rootfs: '/opt/poligo/sandbox-slots/slot1',
+    uid: 20001,
+    username: 'poligo20001'
+  },
+  {
+    name: 'slot2',
+    rootfs: '/opt/poligo/sandbox-slots/slot2',
+    uid: 20002,
+    username: 'poligo20002'
+  }
+]
 const maxFiles = Number(process.env.TERMINAL_MAX_FILES || 200)
 const maxProjectBytes = Number(process.env.TERMINAL_MAX_PROJECT_BYTES || 5_000_000)
 const maxWorkspaceBytes = Number(process.env.TERMINAL_MAX_WORKSPACE_BYTES || 134_217_728)
 const maxWorkspaceEntries = Number(process.env.TERMINAL_MAX_WORKSPACE_ENTRIES || 5_000)
 const maxOutputBytes = Number(process.env.TERMINAL_MAX_OUTPUT_BYTES || 65_536)
-const maxSessions = Number(process.env.TERMINAL_MAX_SESSIONS || 2)
+const maxSessions = Math.min(Number(process.env.TERMINAL_MAX_SESSIONS || 2), sandboxSlots.length)
 const idleTtlMs = Number(process.env.TERMINAL_IDLE_TTL_MS || 30 * 60 * 1000)
 const maxLifetimeMs = Number(process.env.TERMINAL_MAX_LIFETIME_MS || 60 * 60 * 1000)
 const maxSocketBufferBytes = 1_048_576
@@ -27,9 +41,8 @@ const ignoredDirectories = new Set([
 ])
 
 const sessions = new Map()
-const reservedUids = new Set()
+const reservedSlots = new Set()
 let pendingCreates = 0
-let nextUid = 20_000
 let sandboxStatus = {
   ready: false,
   reason: 'sandbox has not been initialized'
@@ -111,24 +124,15 @@ function normalizeFiles(files) {
   return normalized
 }
 
-function allocateUid() {
-  for (let attempt = 0; attempt < 40_000; attempt += 1) {
-    const uid = nextUid
-    nextUid += 1
+function allocateSlot() {
+  const slot = sandboxSlots.find(candidate => !reservedSlots.has(candidate.name))
 
-    if (nextUid > 59_999) {
-      nextUid = 20_000
-    }
-
-    if (reservedUids.has(uid)) {
-      continue
-    }
-
-    reservedUids.add(uid)
-    return uid
+  if (!slot) {
+    throw new Error('terminal capacity is currently full')
   }
 
-  throw new Error('terminal user pool is exhausted')
+  reservedSlots.add(slot.name)
+  return slot
 }
 
 async function setWorkspaceOwnership(directory, uid) {
@@ -157,145 +161,68 @@ async function setWorkspaceOwnership(directory, uid) {
   await fs.chown(directory, uid, uid)
 }
 
-async function writeSessionAccountFile(rootfs, filename, line) {
-  const baseFile = path.join(rootfsBase, 'etc', filename)
-  const targetFile = path.join(rootfs, 'etc', filename)
+async function clearDirectory(directory) {
+  await fs.mkdir(directory, {
+    recursive: true
+  })
 
-  await fs.unlink(targetFile)
-  await fs.copyFile(baseFile, targetFile)
-  await fs.appendFile(targetFile, line, 'utf8')
-  await fs.chmod(targetFile, 0o444)
-}
+  const entries = await fs.readdir(directory)
 
-async function ensureSandboxDeviceNodes() {
-  const devDirectory = path.join(rootfsBase, 'dev')
-  const devices = [
-    { name: 'null', major: 1, minor: 3 },
-    { name: 'zero', major: 1, minor: 5 },
-    { name: 'full', major: 1, minor: 7 },
-    { name: 'random', major: 1, minor: 8 },
-    { name: 'urandom', major: 1, minor: 9 },
-    { name: 'tty', major: 5, minor: 0 }
-  ]
-
-  try {
-    await fs.chmod(devDirectory, 0o755)
-
-    for (const device of devices) {
-      const filename = path.join(devDirectory, device.name)
-      let stat = null
-
-      try {
-        stat = await fs.lstat(filename)
-      } catch (error) {
-        if (error?.code !== 'ENOENT') {
-          throw error
-        }
-      }
-
-      if (stat && !stat.isCharacterDevice()) {
-        throw new Error('invalid sandbox device node: ' + device.name)
-      }
-
-      if (!stat) {
-        await execFileAsync('/usr/bin/mknod', [
-          '-m',
-          '666',
-          filename,
-          'c',
-          String(device.major),
-          String(device.minor)
-        ], {
-          timeout: 5_000,
-          maxBuffer: 4_096
-        })
-      }
-
-      await fs.chmod(filename, 0o666)
-    }
-  } finally {
-    await fs.chmod(devDirectory, 0o555).catch(() => {})
+  for (const entry of entries) {
+    await fs.rm(path.join(directory, entry), {
+      recursive: true,
+      force: true
+    })
   }
 }
 
-async function createSessionFilesystem(id, uid, files) {
-  const rootfs = path.join(workspaceRoot, id)
-  await fs.mkdir(rootfs, {
-    recursive: false,
+async function resetSlotFilesystem(slot) {
+  const workspace = path.join(slot.rootfs, 'workspace')
+  const tempDirectories = [
+    path.join(slot.rootfs, 'tmp'),
+    path.join(slot.rootfs, 'var', 'tmp')
+  ]
+
+  await clearDirectory(workspace)
+  await fs.chown(workspace, slot.uid, slot.uid)
+  await fs.chmod(workspace, 0o700)
+
+  for (const directory of tempDirectories) {
+    await clearDirectory(directory)
+    await fs.chmod(directory, 0o1777)
+  }
+}
+
+async function createSessionFilesystem(slot, files) {
+  const { rootfs, uid, username } = slot
+  const workspace = path.join(rootfs, 'workspace')
+
+  await resetSlotFilesystem(slot)
+  await fs.mkdir(path.join(workspace, '.terminal-cache', 'tmp'), {
+    recursive: true,
     mode: 0o700
   })
 
-  try {
-    const rootEntries = await fs.readdir(rootfsBase)
-
-    for (const entry of rootEntries) {
-      await execFileAsync('/bin/cp', [
-        '-al',
-        path.join(rootfsBase, entry),
-        rootfs
-      ], {
-        timeout: 15_000,
-        maxBuffer: 65_536
-      })
-    }
-
-    for (const required of ['etc', 'usr', 'bin', 'workspace', 'tmp', 'dev']) {
-      const target = path.join(rootfs, required)
-      const stat = await fs.lstat(target).catch(() => null)
-
-      if (!stat) {
-        throw new Error('missing chroot root entry: ' + required)
-      }
-    }
-
-    const username = 'poligo' + uid
-    await fs.chmod(path.join(rootfs, 'etc'), 0o755)
-    await writeSessionAccountFile(
-      rootfs,
-      'passwd',
-      username + ':x:' + uid + ':' + uid + ':Poligo Terminal:/workspace:/usr/bin/bash\n'
-    )
-    await writeSessionAccountFile(
-      rootfs,
-      'group',
-      username + ':x:' + uid + ':\n'
-    )
-
-    const workspace = path.join(rootfs, 'workspace')
-    await fs.chmod(workspace, 0o700)
-    await fs.chown(workspace, uid, uid)
-    await fs.mkdir(path.join(workspace, '.terminal-cache', 'tmp'), {
+  for (const [name, content] of Object.entries(files)) {
+    const destination = path.join(workspace, name)
+    await fs.mkdir(path.dirname(destination), {
       recursive: true,
       mode: 0o700
     })
+    await fs.writeFile(destination, content, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx'
+    })
+  }
 
-    for (const [name, content] of Object.entries(files)) {
-      const destination = path.join(workspace, name)
-      await fs.mkdir(path.dirname(destination), {
-        recursive: true,
-        mode: 0o700
-      })
-      await fs.writeFile(destination, content, {
-        encoding: 'utf8',
-        mode: 0o600,
-        flag: 'wx'
-      })
-    }
+  await setWorkspaceOwnership(workspace, uid)
 
-    await setWorkspaceOwnership(workspace, uid)
-    await fs.chmod(rootfs, 0o755)
-
-    return {
-      rootfs,
-      workspace,
-      username
-    }
-  } catch (error) {
-    await fs.rm(rootfs, {
-      recursive: true,
-      force: true
-    }).catch(() => {})
-    throw error
+  return {
+    rootfs,
+    workspace,
+    username,
+    slot
   }
 }
 
@@ -410,6 +337,7 @@ function createPty(session) {
     session.rootfs,
     String(session.uid),
     String(session.uid),
+    '/workspace',
     '/usr/bin/bash',
     '--noprofile',
     '--norc',
@@ -513,7 +441,8 @@ async function runSandboxProbe(rootfs, uid) {
     launcherPath,
     rootfs,
     String(uid),
-    String(uid)
+    String(uid),
+    '/workspace'
   ]
 
   const identity = await runProbe('/usr/bin/prlimit', [
@@ -567,6 +496,11 @@ export async function initializeSandbox() {
     !existsSync(path.join(rootfsBase, 'usr', 'bin', 'bash')) ||
     !existsSync(path.join(rootfsBase, 'usr', 'bin', 'python3')) ||
     !existsSync(path.join(rootfsBase, 'workspace')) ||
+    sandboxSlots.some(slot =>
+      !existsSync(path.join(slot.rootfs, 'usr', 'bin', 'bash')) ||
+      !existsSync(path.join(slot.rootfs, 'usr', 'bin', 'python3')) ||
+      !existsSync(path.join(slot.rootfs, 'workspace'))
+    ) ||
     !existsSync('/usr/bin/prlimit') ||
     !existsSync('/usr/bin/pkill')
   ) {
@@ -577,26 +511,7 @@ export async function initializeSandbox() {
     return sandboxStatus
   }
 
-  try {
-    await ensureSandboxDeviceNodes()
-  } catch (error) {
-    const reason = (error instanceof Error ? error.message : String(error)).slice(0, 600)
-
-    sandboxStatus = {
-      ready: false,
-      reason: 'sandbox device initialization failed: ' + reason
-    }
-
-    console.error('Terminal sandbox device setup failed', {
-      reason
-    })
-
-    return sandboxStatus
-  }
-
-  const probeId = 'sandbox-probe-' + randomUUID()
-  const probeUid = 30001
-  let probeRootfs = ''
+  const probeSlot = sandboxSlots[0]
 
   try {
     await fs.mkdir(workspaceRoot, {
@@ -605,12 +520,11 @@ export async function initializeSandbox() {
     })
     await fs.chmod(workspaceRoot, 0o711)
 
-    const created = await createSessionFilesystem(probeId, probeUid, {
+    await createSessionFilesystem(probeSlot, {
       'probe.txt': 'probe\n'
     })
-    probeRootfs = created.rootfs
 
-    await runSandboxProbe(probeRootfs, probeUid)
+    await runSandboxProbe(probeSlot.rootfs, probeSlot.uid)
 
     sandboxStatus = {
       ready: true,
@@ -626,12 +540,7 @@ export async function initializeSandbox() {
       reason: details || 'chroot sandbox probe failed'
     }
   } finally {
-    if (probeRootfs) {
-      await fs.rm(probeRootfs, {
-        recursive: true,
-        force: true
-      }).catch(() => {})
-    }
+    await resetSlotFilesystem(probeSlot).catch(() => {})
   }
 
   if (!sandboxStatus.ready) {
@@ -668,16 +577,18 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
   }
 
   pendingCreates += 1
-  const uid = allocateUid()
+  const slot = allocateSlot()
+  const uid = slot.uid
   let rootfs = ''
 
   try {
-    const created = await createSessionFilesystem(terminalId, uid, normalized)
+    const created = await createSessionFilesystem(slot, normalized)
     rootfs = created.rootfs
 
     const session = {
       id: terminalId,
       uid,
+      slot,
       username: created.username,
       rootfs,
       workspace: created.workspace,
@@ -705,14 +616,8 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
       createdAt: new Date(session.createdAt).toISOString()
     }
   } catch (error) {
-    if (rootfs) {
-      await fs.rm(rootfs, {
-        recursive: true,
-        force: true
-      }).catch(() => {})
-    }
-
-    reservedUids.delete(uid)
+    await resetSlotFilesystem(slot).catch(() => {})
+    reservedSlots.delete(slot.name)
     throw error
   } finally {
     pendingCreates -= 1
@@ -762,12 +667,14 @@ async function cleanupSession(session) {
   await killUserProcesses(session)
   sessions.delete(session.id)
 
-  await fs.rm(session.rootfs, {
-    recursive: true,
-    force: true
-  }).catch(() => {})
+  await resetSlotFilesystem(session.slot).catch(error => {
+    console.error('Terminal slot cleanup failed', {
+      id: session.id,
+      message: error instanceof Error ? error.message : String(error)
+    })
+  })
 
-  reservedUids.delete(session.uid)
+  reservedSlots.delete(session.slot.name)
 }
 
 export async function closeTerminal(id) {
