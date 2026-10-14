@@ -72,6 +72,6 @@ ENV NODE_ENV=production
 ENV PORT=10000
 
 EXPOSE 10000
-USER 0:0
+USER root
 
 CMD ["node", "src/server.js"]
