@@ -71,4 +71,7 @@ RUN mkdir -p bin /opt/poligo/rootfs/dev /opt/poligo/rootfs/proc /opt/poligo/root
 ENV NODE_ENV=production
 ENV PORT=10000
 
+EXPOSE 10000
+USER 0:0
+
 CMD ["node", "src/server.js"]
