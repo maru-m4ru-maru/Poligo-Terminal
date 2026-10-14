@@ -110,7 +110,7 @@ const server = http.createServer({
       terminalBackend: sandbox.type,
       terminalReady: ready,
       tokenConfigured: Boolean(runnerToken),
-      sandboxReason: sandbox.ready ? undefined : 'secure sandbox initialization failed'
+      sandboxReason: sandbox.ready ? undefined : String(sandbox.reason || 'secure sandbox initialization failed').slice(0, 240)
     })
     return
   }
@@ -293,6 +293,9 @@ async function start() {
       port,
       sandboxReady: sandbox.ready,
       sandboxType: sandbox.type,
+      sandboxReason: sandbox.ready ? '' : sandbox.reason,
+      processUid: process.getuid?.() ?? null,
+      processEuid: process.geteuid?.() ?? null,
       tokenConfigured: Boolean(runnerToken)
     })
   })
