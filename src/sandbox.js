@@ -490,31 +490,48 @@ async function runSandboxProbe(rootfs, uid) {
 }
 
 export async function initializeSandbox() {
-  if (process.getuid?.() !== 0) {
+  const uid = process.getuid?.()
+  const euid = process.geteuid?.()
+
+  if (uid !== 0) {
     sandboxStatus = {
       ready: false,
       reason: 'runner must start as root to initialize isolated workspaces'
     }
+    console.error('Terminal sandbox initialization blocked', {
+      stage: 'runtime-identity',
+      uid: uid ?? null,
+      euid: euid ?? null,
+      reason: sandboxStatus.reason
+    })
     return sandboxStatus
   }
 
-  if (
-    !existsSync(launcherPath) ||
-    !existsSync(path.join(rootfsBase, 'usr', 'bin', 'bash')) ||
-    !existsSync(path.join(rootfsBase, 'usr', 'bin', 'python3')) ||
-    !existsSync(path.join(rootfsBase, 'workspace')) ||
-    sandboxSlots.some(slot =>
-      !existsSync(path.join(slot.rootfs, 'usr', 'bin', 'bash')) ||
-      !existsSync(path.join(slot.rootfs, 'usr', 'bin', 'python3')) ||
-      !existsSync(path.join(slot.rootfs, 'workspace'))
-    ) ||
-    !existsSync('/usr/bin/prlimit') ||
-    !existsSync('/usr/bin/pkill')
-  ) {
+  const requiredPaths = [
+    launcherPath,
+    path.join(rootfsBase, 'usr', 'bin', 'bash'),
+    path.join(rootfsBase, 'usr', 'bin', 'python3'),
+    path.join(rootfsBase, 'workspace'),
+    '/usr/bin/prlimit',
+    '/usr/bin/pkill',
+    ...sandboxSlots.flatMap(slot => [
+      path.join(slot.rootfs, 'usr', 'bin', 'bash'),
+      path.join(slot.rootfs, 'usr', 'bin', 'python3'),
+      path.join(slot.rootfs, 'workspace')
+    ])
+  ]
+  const missingPaths = requiredPaths.filter(candidate => !existsSync(candidate))
+
+  if (missingPaths.length) {
     sandboxStatus = {
       ready: false,
-      reason: 'chroot runtime or launcher is not installed'
+      reason: 'required sandbox files are missing'
     }
+    console.error('Terminal sandbox initialization blocked', {
+      stage: 'runtime-layout',
+      missingPaths,
+      reason: sandboxStatus.reason
+    })
     return sandboxStatus
   }
 
