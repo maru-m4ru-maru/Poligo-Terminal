@@ -63,12 +63,13 @@ This is defense in depth, not a dedicated VM. It depends on the container kernel
 ## API
 
 - `GET /health`: health and sandbox readiness, without revealing secret values.
+- `HEAD /health`: unauthenticated status-only health check for uptime monitors.
 - `POST /v1/terminals`: create a terminal session from a project ID and text files.
 - `GET /v1/terminals/:id/files`: retrieve the session's synchronized text files.
 - `DELETE /v1/terminals/:id`: stop and remove a session.
 - `WS /v1/terminals/:id`: PTY input/output and resize events.
 
-Except for `GET /health`, HTTP and WebSocket endpoints require `Authorization: Bearer <RUNNER_TOKEN>`. End-user authentication and project ownership checks remain the responsibility of the Poligo API; this service is intended to be called only by that trusted API.
+Except for `GET` and `HEAD /health`, HTTP and WebSocket endpoints require `Authorization: Bearer <RUNNER_TOKEN>`. End-user authentication and project ownership checks remain the responsibility of the Poligo API; this service is intended to be called only by that trusted API.
 
 ## Local test
 
