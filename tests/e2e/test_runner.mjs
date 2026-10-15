@@ -196,6 +196,10 @@ async function run() {
   }, null)
   assert.equal(unauthenticated.status, 401)
 
+  const unauthenticatedList = await request('/v1/terminals', 'GET', undefined, null)
+  assert.equal(unauthenticatedList.status, 401)
+  console.log('PASS terminal session inventory requires authentication')
+
   const invalidPath = await request('/v1/terminals', 'POST', {
     id: randomUUID(),
     files: {
@@ -210,7 +214,26 @@ async function run() {
     'private.txt': 'private session content\n'
   })
 
+  const initialInventory = await request('/v1/terminals')
+  assert.equal(initialInventory.status, 200, initialInventory.text)
+  assert.ok(Array.isArray(initialInventory.body?.terminals))
+  assert.ok(initialInventory.body.terminals.some(item =>
+    item.id === firstId &&
+    item.connected === false &&
+    typeof item.disconnectedAt === 'string' &&
+    typeof item.lastUsedAt === 'string' &&
+    item.exited === false
+  ))
+  console.log('PASS authenticated terminal session inventory')
+
   const first = await openSocket(firstId)
+  const connectedInventory = await request('/v1/terminals')
+  assert.equal(connectedInventory.status, 200, connectedInventory.text)
+  assert.ok(connectedInventory.body.terminals.some(item =>
+    item.id === firstId &&
+    item.connected === true &&
+    item.disconnectedAt === null
+  ))
   first.terminalId = firstId
   first.send(JSON.stringify({
     type: 'resize',
