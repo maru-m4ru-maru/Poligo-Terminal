@@ -6,6 +6,7 @@ import {
   closeTerminal,
   createTerminalSession,
   getSandboxStatus,
+  listTerminalSessions,
   getTerminalFiles,
   applyTerminalFiles,
   initializeSandbox
@@ -129,6 +130,16 @@ const server = http.createServer({
   if (!authorized(request)) {
     send(response, 401, {
       error: 'unauthorized'
+    })
+    return
+  }
+
+  if (
+    request.method === 'GET' &&
+    url.pathname === '/v1/terminals'
+  ) {
+    send(response, 200, {
+      terminals: listTerminalSessions()
     })
     return
   }

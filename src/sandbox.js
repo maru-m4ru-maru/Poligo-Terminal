@@ -584,6 +584,22 @@ export function getSandboxStatus() {
   }
 }
 
+export function listTerminalSessions() {
+  return [...sessions.values()].map(session => {
+    const connected = session.socket?.readyState === 1
+
+    return {
+      id: session.id,
+      connected,
+      disconnectedAt: connected
+        ? null
+        : new Date(session.disconnectedAt ?? session.createdAt).toISOString(),
+      lastUsedAt: new Date(session.lastUsedAt).toISOString(),
+      exited: session.exitedAt !== null
+    }
+  })
+}
+
 export async function createTerminalSession({ id = randomUUID(), files }) {
   if (!sandboxStatus.ready) {
     throw new Error('secure terminal sandbox is unavailable')
@@ -618,6 +634,7 @@ export async function createTerminalSession({ id = randomUUID(), files }) {
       workspace: created.workspace,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
+      disconnectedAt: Date.now(),
       exitedAt: null,
       outputBuffer: '',
       socket: null,
@@ -1025,6 +1042,7 @@ export function attachTerminalSocket(id, socket) {
 
   session.socket = socket
   session.lastUsedAt = Date.now()
+  session.disconnectedAt = null
 
   if (session.outputBuffer) {
     socket.send(JSON.stringify({
@@ -1077,12 +1095,14 @@ export function attachTerminalSocket(id, socket) {
   socket.on('close', () => {
     if (session.socket === socket) {
       session.socket = null
+      session.disconnectedAt = Date.now()
     }
   })
 
   socket.on('error', () => {
     if (session.socket === socket) {
       session.socket = null
+      session.disconnectedAt = Date.now()
     }
   })
 }
