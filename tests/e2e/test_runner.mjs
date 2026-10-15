@@ -183,7 +183,10 @@ async function run() {
   assert.equal(health.status, 200, health.text)
   assert.equal(health.body?.service, 'poligo-terminal-runner')
   assert.equal(health.body?.terminalReady, true, health.text)
-  console.log('PASS sandbox readiness')
+
+  const healthHead = await request('/health', 'HEAD', undefined, null)
+  assert.equal(healthHead.status, 200, healthHead.text)
+  console.log('PASS unauthenticated GET and HEAD health checks')
 
   const unauthenticated = await request('/v1/terminals', 'POST', {
     id: randomUUID(),

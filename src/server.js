@@ -100,18 +100,29 @@ const server = http.createServer({
 }, async (request, response) => {
   const url = new URL(request.url || '/', 'http://localhost')
 
-  if (request.method === 'GET' && url.pathname === '/health') {
+  if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname === '/health') {
     const sandbox = getSandboxStatus()
     const ready = Boolean(runnerToken) && sandbox.ready
-
-    send(response, ready ? 200 : 503, {
+    const status = ready ? 200 : 503
+    const body = {
       status: ready ? 'ok' : 'degraded',
       service: 'poligo-terminal-runner',
       terminalBackend: sandbox.type,
       terminalReady: ready,
       tokenConfigured: Boolean(runnerToken),
       sandboxReason: sandbox.ready ? undefined : String(sandbox.reason || 'secure sandbox initialization failed').slice(0, 240)
-    })
+    }
+
+    if (request.method === 'HEAD') {
+      response.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+      })
+      response.end()
+    } else {
+      send(response, status, body)
+    }
     return
   }
 
